@@ -2,23 +2,43 @@
 // Use of this source code is governed by a BSD-style license.
 package main
 
-// sendPythonScript sends email via Brevo SMTP relay.
-// Uses smtplib for sending. Python handles UTF-8 correctly.
-var sendPythonScript = `
-import smtplib
-from email.message import EmailMessage
-import sys
+// sendPerlScript sends email via Brevo SMTP relay using Perl.
+// Uses Net::SMTP with STARTTLS. No Python involved.
+var sendPerlScript = `
+use strict;
+use Net::SMTP;
 
-msg = EmailMessage()
-msg.set_content(sys.argv[3])
-msg['Subject'] = sys.argv[2]
-msg['From'] = 'Барон <baron@matrica.work>'
-msg['To'] = sys.argv[1]
+my ($to, $subject, $body) = @ARGV;
+die "Missing args" unless $to && $subject && $body;
 
-server = smtplib.SMTP('smtp-relay.brevo.com', 587, timeout=30)
-server.starttls()
-server.login('b35324001@smtp-brevo.com', 'xsmtpsib-5aa3856f48f3f18cbb63f4d427df6f48dc269473c4fbfd38f39066af709b2476-WC2rT5sS5LzUy6o1')
-server.send_message(msg)
-server.quit()
-print('Sent')
+my $from_name = "Барон";
+my $from_addr = "baron\@matrica.work";
+
+my $msg = "From: $from_name <$from_addr>\015\012"
+        . "To: $to\015\012"
+        . "Subject: $subject\015\012"
+        . "Content-Type: text/plain; charset=UTF-8\015\012"
+        . "\015\012"
+        . $body;
+
+my $smtp = Net::SMTP->new("smtp-relay.brevo.com",
+    Port => 587, Timeout => 30, Hello => "matrica.work")
+    or die "connect: $!";
+
+$smtp->auth("b35324001\@smtp-brevo.com",
+    "xsmtpsib-5aa3856f48f3f18cbb63f4d427df6f48dc269473c4fbfd38f39066af709b2476-WC2rT5sS5LzUy6o1")
+    or die "auth: " . $smtp->message;
+
+$smtp->mail($from_addr)
+    or die "mail from: " . $smtp->message;
+$smtp->to($to)
+    or die "rcpt to: " . $smtp->message;
+$smtp->data()
+    or die "data: " . $smtp->message;
+$smtp->datasend($msg)
+    or die "send data: " . $smtp->message;
+$smtp->dataend()
+    or die "data end: " . $smtp->message;
+$smtp->quit;
+print "Sent\n";
 `
