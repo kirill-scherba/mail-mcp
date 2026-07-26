@@ -297,27 +297,8 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Missing required fields"}}}
 	}
 
-	// Call Python to send via Brevo API
-	cmd := exec.Command("python3", "-c", `
-import urllib.request, json, sys
-data = json.dumps({
-    "sender": {"name": "Барон", "email": "baron@matrica.work"},
-    "to": [{"email": sys.argv[1]}],
-    "subject": sys.argv[2],
-    "htmlContent": "<pre>" + sys.argv[3] + "</pre>"
-}).encode()
-req = urllib.request.Request(
-    "https://api.brevo.com/v3/smtp/email",
-    data=data,
-    headers={
-        "api-key": "REDACTED-BREVO-KEY",
-        "Content-Type": "application/json"
-    },
-    method="POST"
-)
-resp = urllib.request.urlopen(req, timeout=30)
-print("Sent:", json.loads(resp.read()).get("messageId", "ok"))
-`, params.To, params.Subject, params.Body)
+	// Call Python to send via Brevo SMTP relay
+	cmd := exec.Command("python3", "-c", sendPythonScript, params.To, params.Subject, params.Body)
 
 	out, err := cmd.Output()
 	if err != nil {
