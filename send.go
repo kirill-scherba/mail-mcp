@@ -3,7 +3,7 @@
 package main
 
 // sendPythonScript sends email via Brevo SMTP relay.
-// Uses smtplib to send directly through smtp-relay.brevo.com:587.
+// Uses smtplib for sending. Python handles UTF-8 correctly.
 var sendPythonScript = `
 import smtplib
 from email.message import EmailMessage
