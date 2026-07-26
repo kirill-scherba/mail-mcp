@@ -297,8 +297,8 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Missing required fields"}}}
 	}
 
-	// Call Python to send via Brevo SMTP relay
-	cmd := exec.Command("python3", "-c", sendPythonScript, params.To, params.Subject, params.Body)
+	// Call Perl to send via Brevo SMTP relay
+	cmd := exec.Command("perl", "-e", sendPerlScript, params.To, params.Subject, params.Body)
 
 	out, err := cmd.Output()
 	if err != nil {
