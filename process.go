@@ -108,12 +108,33 @@ func processMail(agent string) (string, error) {
 
 		body := extractBodyViaPerl(string(data))
 
+		// Auto-create/update contact
+		contact := ensureContact(from)
+
+		// Build contact description string
+		contactStr := ""
+		if contact != nil {
+			if contact.Who != "" {
+				contactStr = fmt.Sprintf("Это %s. %s.", contact.Name, contact.Who)
+			}
+			if contact.Summary != "" {
+				contactStr += " Ранее обсуждали: " + contact.Summary
+			}
+		}
+
 		// Build context from recent emails with this sender
 		context := buildSenderContext(mboxDir, senderEmail, e.Name())
 		prompt := mailProcessPrompt
-		if context != "" {
-			prompt = "Вот последние письма с этим собеседником:\n" +
-				context + "\n\n---\n\n" + mailProcessPrompt
+		if contactStr != "" || context != "" {
+			prefix := ""
+			if contactStr != "" {
+				prefix += contactStr + "\n\n"
+			}
+			if context != "" {
+				prefix += "Вот последние письма с этим собеседником:\n" +
+					context + "\n\n---\n\n"
+			}
+			prompt = prefix + mailProcessPrompt
 		}
 		prompt = fmt.Sprintf(prompt, from, subject, body)
 

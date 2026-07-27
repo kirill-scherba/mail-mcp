@@ -150,6 +150,31 @@ func getTools() []Tool {
 				}
 			}`),
 		},
+		{
+			Name:        "contact_get",
+			Description: "Get contact info from the address book by email.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"email": {"type": "string", "description": "Email address"}
+				},
+				"required": ["email"]
+			}`),
+		},
+		{
+			Name:        "contact_save",
+			Description: "Create or update a contact in the address book.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"email": {"type": "string", "description": "Email address"},
+					"name": {"type": "string", "description": "Display name"},
+					"who": {"type": "string", "description": "Brief description"},
+					"summary": {"type": "string", "description": "Dialogue summary"}
+				},
+				"required": ["email"]
+			}`),
+		},
 	}
 }
 
@@ -162,13 +187,17 @@ func handleToolCall(call ToolCall) ToolResult {
 	case "mail_send":
 		return handleMailSend(call.Arguments)
 	case "mail_process":
-		var params struct {
+		var mp struct {
 			Agent string `json:"agent"`
 		}
 		if len(call.Arguments) > 0 {
-			json.Unmarshal(call.Arguments, &params)
+			json.Unmarshal(call.Arguments, &mp)
 		}
-		return handleMailProcess(&params)
+		return handleMailProcess(&mp)
+	case "contact_get":
+		return handleContactGet(call.Arguments)
+	case "contact_save":
+		return handleContactSave(call.Arguments)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
