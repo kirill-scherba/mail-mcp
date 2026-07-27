@@ -175,6 +175,16 @@ func getTools() []Tool {
 				"required": ["email"]
 			}`),
 		},
+		{
+			Name:        "waiting_list",
+			Description: "List pending (waiting) emails — those waiting for replies from others.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"agent": {"type": "string", "default": "baron"}
+				}
+			}`),
+		},
 	}
 }
 
@@ -198,6 +208,8 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleContactGet(call.Arguments)
 	case "contact_save":
 		return handleContactSave(call.Arguments)
+	case "waiting_list":
+		return handleWaitingList(call.Arguments)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
