@@ -144,7 +144,9 @@ func getTools() []Tool {
 			Description: "Запускает почтовую сессию: сканирует новые письма, создаёт opencode-сессию для каждого, отправляет ответы.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
-				"properties": {}
+				"properties": {
+					"agent": {"type": "string", "description": "Agent name (default: baron)", "default": "baron"}
+				}
 			}`),
 		},
 	}
@@ -159,7 +161,13 @@ func handleToolCall(call ToolCall) ToolResult {
 	case "mail_send":
 		return handleMailSend(call.Arguments)
 	case "mail_process":
-		return handleMailProcess()
+		var params struct {
+			Agent string `json:"agent"`
+		}
+		if len(call.Arguments) > 0 {
+			json.Unmarshal(call.Arguments, &params)
+		}
+		return handleMailProcess(&params)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
