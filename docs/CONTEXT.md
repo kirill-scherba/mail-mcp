@@ -19,4 +19,4 @@ ecosystem. It is fully functional: receive, list, read, and send email.
 - Perl scripts embedded as Go string constants in separate files
 - Emails stored as raw .eml files, read status via hidden marker files
 - Mailbox routing based on To: header local part
-- API key stored in embedded script (TODO: move to config/env)
+- API key in ~/.config/mcp-gateway/env, loaded via systemd EnvironmentFile
