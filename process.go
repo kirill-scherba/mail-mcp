@@ -25,7 +25,9 @@ var trustedSenders = []string{
 }
 
 // mailProcessPrompt is sent to opencode session for each email
-const mailProcessPrompt = `Ты получил письмо. Вот его содержание:
+const mailProcessPrompt = `Это сообщение генерируется автоматически, когда на твой ящик приходит письмо.
+
+Ты получил письмо. Вот его содержание:
 
 От: %s
 Тема: %s
