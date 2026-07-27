@@ -8,8 +8,8 @@ var sendPerlScript = `
 use strict;
 use Net::SMTP;
 
-my ($to, $subject, $body, $api_key) = @ARGV;
-die "Missing args" unless $to && $subject && $body && $api_key;
+my ($to, $subject, $body) = @ARGV;
+die "Missing args" unless $to && $subject && $body;
 
 my $from_name = "Барон";
 my $from_addr = "baron\@matrica.work";
@@ -26,7 +26,7 @@ my $smtp = Net::SMTP->new("smtp-relay.brevo.com",
     or die "connect: $!";
 
 $smtp->auth("b35324001\@smtp-brevo.com",
-    $api_key)
+    $ENV{BREVO_SMTP_KEY})
     or die "auth: " . $smtp->message;
 
 $smtp->mail($from_addr)

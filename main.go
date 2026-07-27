@@ -297,17 +297,9 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Missing required fields"}}}
 	}
 
-	// Brevo API key from environment (not hardcoded)
-	brevoKey := os.Getenv("BREVO_SMTP_KEY")
-	if brevoKey == "" {
-		return ToolResult{
-			IsError: true,
-			Content: []ContentItem{{Type: "text", Text: "BREVO_SMTP_KEY not set"}},
-		}
-	}
 	// Call Perl to send via Brevo SMTP relay
 	cmd := exec.Command("perl", "-e", sendPerlScript,
-		params.To, params.Subject, params.Body, brevoKey)
+		params.To, params.Subject, params.Body)
 
 	out, err := cmd.Output()
 	if err != nil {
