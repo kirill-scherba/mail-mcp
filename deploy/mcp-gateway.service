@@ -1,0 +1,11 @@
+[Unit]
+Description=MCP Gateway — multi-MCP proxy (with auto-restart)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/mcp-gateway-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
