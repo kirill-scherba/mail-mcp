@@ -118,6 +118,10 @@ func processMail(mailbox string) (string, error) {
 
 		log.Printf("session %s created for %s", sess.ID, e.Name())
 		reply, err := ocClient.SendMessage(sess, prompt)
+		// Close session regardless of error
+		if clsErr := ocClient.CloseSessionID(sess.ID); clsErr != nil {
+			log.Printf("close session %s: %v", sess.ID, clsErr)
+		}
 		if err != nil {
 			results = append(results, fmt.Sprintf("❌ %s: send error: %v", e.Name(), err))
 			continue
