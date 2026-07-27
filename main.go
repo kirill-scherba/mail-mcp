@@ -132,11 +132,19 @@ func getTools() []Tool {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"to": {"type": "string", "description": "Recipient email"},
+					"to":      {"type": "string", "description": "Recipient email"},
 					"subject": {"type": "string", "description": "Email subject"},
-					"body": {"type": "string", "description": "Email body text"}
+					"body":    {"type": "string", "description": "Email body text"}
 				},
 				"required": ["to", "subject", "body"]
+			}`),
+		},
+		{
+			Name:        "mail_process",
+			Description: "Запускает почтовую сессию: сканирует новые письма, создаёт opencode-сессию для каждого, отправляет ответы.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {}
 			}`),
 		},
 	}
@@ -150,6 +158,8 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleMailRead(call.Arguments)
 	case "mail_send":
 		return handleMailSend(call.Arguments)
+	case "mail_process":
+		return handleMailProcess()
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
@@ -249,28 +259,8 @@ func handleMailRead(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Email not found"}}}
 	}
 
-	// Call Perl parser
-	cmd := exec.Command("perl", "-e", `
-		use Email::MIME;
-		use Encode;
-		my $raw = do { local $/; <STDIN> };
-		my $email = Email::MIME->new($raw);
-		print "From: " . $email->header('From') . "\n";
-		print "To: " . $email->header('To') . "\n";
-		print "Subject: " . decode('MIME-Header', $email->header('Subject')) . "\n";
-		print "Date: " . $email->header('Date') . "\n";
-		print "---\n";
-		for my $part ($email->parts) {
-			my $ct = $part->content_type || '';
-			if ($ct =~ m|text/plain|i) {
-				print $part->body_str;
-				last;
-			}
-		}
-		if (!scalar($email->parts)) {
-			print $email->body_str;
-		}
-	`)
+	// Call Perl parser (constant from parse.go)
+	cmd := exec.Command("perl", "-e", parsePerlScript)
 	data, _ := os.ReadFile(emailPath)
 	cmd.Stdin = strings.NewReader(string(data))
 	out, err := cmd.Output()
