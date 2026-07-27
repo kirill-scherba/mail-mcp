@@ -185,6 +185,26 @@ func getTools() []Tool {
 				}
 			}`),
 		},
+		{
+			Name:        "waiting_create",
+			Description: "Create a waiting item for an email that needs info from someone else. Saves the pending request and sends questions to specified recipients.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"file": {"type": "string", "description": "Original email filename"},
+					"from": {"type": "string", "description": "Original sender email"},
+					"subject": {"type": "string", "description": "Original email subject"},
+					"needs": {"type": "array", "description": "List of people to ask", "items": {
+						"type": "object",
+						"properties": {
+							"who": {"type": "string", "description": "Email of person to ask"},
+							"question": {"type": "string", "description": "Question to ask them"}
+						}
+					}},
+					"agent": {"type": "string", "default": "baron"}
+				}
+			}`),
+		},
 	}
 }
 
@@ -210,6 +230,8 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleContactSave(call.Arguments)
 	case "waiting_list":
 		return handleWaitingList(call.Arguments)
+	case "waiting_create":
+		return handleWaitingCreate(call.Arguments)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}

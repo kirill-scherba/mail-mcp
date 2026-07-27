@@ -193,6 +193,52 @@ func waitingMatch(agent, from, subject string) (*WaitingItem, int) {
 
 // ─── MCP tool handlers ───────────────────────────────────────────────────
 
+// waitingCreateArgs for the waiting_create tool
+type waitingCreateArgs struct {
+	Agent   string `json:"agent"`
+	File    string `json:"file"`
+	From    string `json:"from"`
+	Subject string `json:"subject"`
+	Needs   []struct {
+		Who      string `json:"who"`
+		Question string `json:"question"`
+	} `json:"needs"`
+}
+
+func handleWaitingCreate(args json.RawMessage) ToolResult {
+	var p waitingCreateArgs
+	json.Unmarshal(args, &p)
+	if p.Agent == "" {
+		p.Agent = "baron"
+	}
+	if len(p.Needs) == 0 {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "needs list is empty"}}}
+	}
+
+	w := waitingCreate(p.Agent, p.From, p.Subject, p.File)
+	for _, n := range p.Needs {
+		status := "pending"
+		if n.Question != "" {
+			status = "asked"
+			// Send the question email to the person
+			go func(who, question string) {
+				sendSMTP(who, "Вопрос: "+p.Subject, question)
+			}(n.Who, n.Question)
+		}
+		w.Needs = append(w.Needs, WaitingNeed{
+			Who:      n.Who,
+			Question: n.Question,
+			Status:   status,
+			AskedAt:  time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	waitingSave(w)
+
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf(
+		"✅ Waiting item #%s created. %d вопросов отправлено.", w.ID[:8], len(p.Needs))}},
+	}
+}
+
 func handleWaitingList(args json.RawMessage) ToolResult {
 	var p struct {
 		Agent string `json:"agent"`
