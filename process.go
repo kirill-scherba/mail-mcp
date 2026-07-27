@@ -131,9 +131,9 @@ func processMail(agent string) (string, error) {
 		log.Printf("session %s created for %s", sess.ID, e.Name())
 		reply, err := ocClient.SendMessage(sess, prompt)
 
-		if clsErr := ocClient.CloseSessionID(sess.ID); clsErr != nil {
-			log.Printf("close session %s: %v", sess.ID, clsErr)
-		}
+		// if clsErr := ocClient.CloseSessionID(sess.ID); clsErr != nil {
+		// 	log.Printf("close session %s: %v", sess.ID, clsErr)
+		// }
 
 		if err != nil {
 			results = append(results, fmt.Sprintf("❌ %s: session send error: %v", e.Name(), err))
@@ -161,31 +161,40 @@ func processMail(agent string) (string, error) {
 	return strings.Join(results, "\n"), nil
 }
 
-// buildSenderContext reads last N emails from the same sender
+// buildSenderContext reads last N emails from the same sender (inbox + sent)
 func buildSenderContext(mboxDir, senderEmail, skipFile string) string {
-	entries, err := os.ReadDir(mboxDir)
-	if err != nil {
-		return ""
-	}
 	type emailInfo struct {
 		name string
 		time int64
+		dir  string // "" for inbox, "sent" for sent
 	}
 	var emails []emailInfo
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".eml") || e.Name() == skipFile {
-			continue
+
+	// Scan inbox
+	addFromDir := func(dir, prefix string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-		data, _ := os.ReadFile(mboxDir + "/" + e.Name())
-		from := extractHeader(string(data), "From")
-		if !strings.Contains(from, senderEmail) {
-			continue
-		}
-		info, _ := e.Info()
-		if info != nil {
-			emails = append(emails, emailInfo{name: e.Name(), time: info.ModTime().Unix()})
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".eml") || e.Name() == skipFile {
+				continue
+			}
+			data, _ := os.ReadFile(dir + "/" + e.Name())
+			from := extractHeader(string(data), "From")
+			to := extractHeader(string(data), "To")
+			if !strings.Contains(from, senderEmail) && !strings.Contains(to, senderEmail) {
+				continue
+			}
+			info, _ := e.Info()
+			if info != nil {
+				emails = append(emails, emailInfo{name: e.Name(), time: info.ModTime().Unix(), dir: prefix})
+			}
 		}
 	}
+	addFromDir(mboxDir, "")
+	addFromDir(mboxDir+"/sent", "sent")
+
 	sort.Slice(emails, func(i, j int) bool { return emails[i].time > emails[j].time })
 
 	var parts []string
@@ -193,10 +202,19 @@ func buildSenderContext(mboxDir, senderEmail, skipFile string) string {
 		if i >= mailContextMaxLetters {
 			break
 		}
-		data, _ := os.ReadFile(mboxDir + "/" + em.name)
+		dir := mboxDir
+		if em.dir == "sent" {
+			dir = mboxDir + "/sent"
+		}
+		data, _ := os.ReadFile(dir + "/" + em.name)
 		subj := extractHeader(string(data), "Subject")
+		from := extractHeader(string(data), "From")
 		body := extractBodyViaPerl(string(data))
-		parts = append(parts, fmt.Sprintf("--- Письмо: %s ---\n%s\n", subj, body))
+		if em.dir == "sent" {
+			parts = append(parts, fmt.Sprintf("--- Мой ответ (Re: %s): ---\n%s\n", subj, body))
+		} else {
+			parts = append(parts, fmt.Sprintf("--- Письмо от %s (тема: %s): ---\n%s\n", from, subj, body))
+		}
 	}
 	return strings.Join(parts, "\n")
 }
