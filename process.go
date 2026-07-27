@@ -108,6 +108,14 @@ func processMail(agent string) (string, error) {
 
 		body := extractBodyViaPerl(string(data))
 
+		// Check if this email answers a waiting question
+		if w, idx := waitingMatch(agent, from, subject); w != nil && idx >= 0 {
+			w.Needs[idx].Status = "answered"
+			w.Needs[idx].AnswerEmail = e.Name()
+			waitingSave(w)
+			results = append(results, fmt.Sprintf("📬 %s: получен ответ на ожидание #%s", e.Name(), w.ID[:8]))
+		}
+
 		// Auto-create/update contact
 		contact := ensureContact(from)
 
@@ -124,17 +132,22 @@ func processMail(agent string) (string, error) {
 
 		// Build context from recent emails with this sender
 		context := buildSenderContext(mboxDir, senderEmail, e.Name())
+		// Check waiting items for status summary
+		waitingSummary := waitingCheck(agent)
+
 		prompt := mailProcessPrompt
-		if contactStr != "" || context != "" {
-			prefix := ""
-			if contactStr != "" {
-				prefix += contactStr + "\n\n"
-			}
-			if context != "" {
-				prefix += "Вот последние письма с этим собеседником:\n" +
-					context + "\n\n---\n\n"
-			}
-			prompt = prefix + mailProcessPrompt
+		var prefixParts []string
+		if contactStr != "" {
+			prefixParts = append(prefixParts, contactStr)
+		}
+		if waitingSummary != "" {
+			prefixParts = append(prefixParts, waitingSummary)
+		}
+		if context != "" {
+			prefixParts = append(prefixParts, "Вот последние письма с этим собеседником:\n"+context)
+		}
+		if len(prefixParts) > 0 {
+			prompt = strings.Join(prefixParts, "\n\n") + "\n\n---\n\n" + mailProcessPrompt
 		}
 		prompt = fmt.Sprintf(prompt, from, subject, body)
 
