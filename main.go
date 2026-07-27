@@ -108,8 +108,9 @@ func getTools() []Tool {
 				"type": "object",
 				"properties": {
 					"mailbox": {"type": "string", "description": "Mailbox name (e.g. baron, merchant)", "default": "baron"},
-					"page": {"type": "integer", "description": "Page number (1-based)", "default": 1},
-					"limit": {"type": "integer", "description": "Items per page", "default": 10},
+					"folder":  {"type": "string", "description": "Folder: inbox (default) or sent", "default": "inbox"},
+					"page":    {"type": "integer", "description": "Page number (1-based)", "default": 1},
+					"limit":   {"type": "integer", "description": "Items per page", "default": 10},
 					"unread_only": {"type": "boolean", "description": "Show only unread", "default": false}
 				}
 			}`),
@@ -176,6 +177,7 @@ func handleToolCall(call ToolCall) ToolResult {
 func handleMailList(args json.RawMessage) ToolResult {
 	var params struct {
 		Mailbox    string `json:"mailbox"`
+		Folder     string `json:"folder"`
 		Page       int    `json:"page"`
 		Limit      int    `json:"limit"`
 		UnreadOnly bool   `json:"unread_only"`
@@ -185,7 +187,11 @@ func handleMailList(args json.RawMessage) ToolResult {
 	if params.Page < 1 { params.Page = 1 }
 	if params.Limit < 1 { params.Limit = 10 }
 
-	mailboxDir := MailDir + "/" + params.Mailbox
+	folderPath := MailDir + "/" + params.Mailbox
+	if params.Folder == "sent" {
+		folderPath += "/sent"
+	}
+	mailboxDir := folderPath
 	entries, err := os.ReadDir(mailboxDir)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Cannot read mailbox: " + err.Error()}}}
