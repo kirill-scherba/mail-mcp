@@ -8,11 +8,10 @@ var sendPerlScript = `
 use strict;
 use Net::SMTP;
 
-my ($to, $subject, $body) = @ARGV;
+my ($from_name, $from_addr, $to, $subject, $body) = @ARGV;
 die "Missing args" unless $to && $subject && $body;
-
-my $from_name = "Барон";
-my $from_addr = "baron\@matrica.work";
+$from_name = "Барон" unless $from_name;
+$from_addr = "baron\@matrica.work" unless $from_addr;
 
 my $msg = "From: $from_name <$from_addr>\015\012"
         . "To: $to\015\012"

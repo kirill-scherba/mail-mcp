@@ -34,6 +34,12 @@ type ContentItem struct {
 // MailDir is where emails are stored
 const MailDir = "/srv/mail"
 
+// Default agent, mailbox, and sender identity
+const defaultAgent = "baron"
+const defaultMailbox = "baron"
+const defaultFromName = "Барон"
+const defaultFromAddr = "baron@matrica.work"
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 || os.Args[1] == "serve" {
@@ -247,7 +253,7 @@ func handleMailList(args json.RawMessage) ToolResult {
 		UnreadOnly bool   `json:"unread_only"`
 	}
 	json.Unmarshal(args, &params)
-	if params.Mailbox == "" { params.Mailbox = "baron" }
+	if params.Mailbox == "" { params.Mailbox = defaultMailbox }
 	if params.Page < 1 { params.Page = 1 }
 	if params.Limit < 1 { params.Limit = 10 }
 
@@ -331,7 +337,7 @@ func handleMailRead(args json.RawMessage) ToolResult {
 		File    string `json:"file"`
 	}
 	json.Unmarshal(args, &params)
-	if params.Mailbox == "" { params.Mailbox = "baron" }
+	if params.Mailbox == "" { params.Mailbox = defaultMailbox }
 	if params.Folder == "" { params.Folder = "inbox" }
 
 	basePath := MailDir + "/" + params.Mailbox
@@ -375,7 +381,7 @@ func handleMailSend(args json.RawMessage) ToolResult {
 
 	// Call Perl to send via Brevo SMTP relay
 	cmd := exec.Command("perl", "-e", sendPerlScript,
-		params.To, params.Subject, params.Body)
+		defaultFromName, defaultFromAddr, params.To, params.Subject, params.Body)
 
 	out, err := cmd.Output()
 	if err != nil {
