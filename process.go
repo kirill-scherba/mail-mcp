@@ -86,6 +86,8 @@ func processMail(agent string) (string, error) {
 	var results []string
 	processedCount := 0
 	ocClient := opencodeclient.New(opencodeBaseURL, 120*time.Second)
+	sessionStore := NewSessionStore(mboxDir)
+	defer sessionStore.Save()
 
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".eml") {
@@ -162,18 +164,13 @@ func processMail(agent string) (string, error) {
 		}
 		prompt = fmt.Sprintf(prompt, from, subject, body)
 
-		sess, err := ocClient.CreateSession("mail-processor", agent,
-			"deepseek/deepseek-v4-flash", "",
-			[]opencodeclient.PermissionRule{
-				{Action: "Question", Permission: "deny"},
-				{Action: "Bash", Permission: "deny"},
-			})
+		sess, err := getOrCreateSession(ocClient, sessionStore, senderEmail, agent)
 		if err != nil {
 			results = append(results, fmt.Sprintf("❌ %s: session error: %v", e.Name(), err))
 			continue
 		}
 
-		log.Printf("session %s created for %s", sess.ID, e.Name())
+		log.Printf("session %s used for %s", sess.ID, e.Name())
 		reply, err := ocClient.SendMessage(sess, prompt)
 
 		// if clsErr := ocClient.CloseSessionID(sess.ID); clsErr != nil {
@@ -181,8 +178,19 @@ func processMail(agent string) (string, error) {
 		// }
 
 		if err != nil {
-			results = append(results, fmt.Sprintf("❌ %s: session send error: %v", e.Name(), err))
-			continue
+			// Session might be dead — discard and create a new one
+			log.Printf("session %s error for %s: %v — retrying with new session", sess.ID, e.Name(), err)
+			sessionStore.Delete(senderEmail)
+			sess, err = getOrCreateSession(ocClient, sessionStore, senderEmail, agent)
+			if err != nil {
+				results = append(results, fmt.Sprintf("❌ %s: retry session error: %v", e.Name(), err))
+				continue
+			}
+			reply, err = ocClient.SendMessage(sess, prompt)
+			if err != nil {
+				results = append(results, fmt.Sprintf("❌ %s: retry send error: %v", e.Name(), err))
+				continue
+			}
 		}
 
 		err = sendSMTP("", "", senderEmail, "Re: "+subject, reply)
@@ -202,6 +210,8 @@ func processMail(agent string) (string, error) {
 		if _, err := ocClient.SendMessage(sess, extractPrompt); err != nil {
 			log.Printf("extract eval for %s: %v", e.Name(), err)
 		}
+
+		sessionStore.Inc(senderEmail)
 
 		os.WriteFile(procFile, []byte{}, 0644)
 		os.WriteFile(readFile, []byte{}, 0644)
