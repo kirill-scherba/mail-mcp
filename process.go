@@ -85,6 +85,7 @@ func processMail(agent string) (string, error) {
 			continue
 		}
 		procFile := mboxDir + "/." + e.Name() + ".processed"
+		readFile := mboxDir + "/." + e.Name() + ".read"
 		if _, err := os.Stat(procFile); err == nil {
 			continue
 		}
@@ -104,6 +105,7 @@ func processMail(agent string) (string, error) {
 
 		if !isTrustedSender(from) {
 			os.WriteFile(procFile, []byte{}, 0644)
+			os.WriteFile(readFile, []byte{}, 0644)
 			results = append(results, fmt.Sprintf("⏭ %s: незнакомый отправитель (%s), пропущено", e.Name(), senderEmail))
 			continue
 		}
@@ -186,6 +188,7 @@ func processMail(agent string) (string, error) {
 		saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
 
 		os.WriteFile(procFile, []byte{}, 0644)
+		os.WriteFile(readFile, []byte{}, 0644)
 		processedCount++
 		results = append(results, fmt.Sprintf("✅ %s: отвечено -> %s", e.Name(), senderEmail))
 		time.Sleep(1 * time.Second)
