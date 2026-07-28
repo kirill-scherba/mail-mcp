@@ -46,7 +46,7 @@ const errReadBody = "(не удалось извлечь текст)"
 func handleMailProcess(args *struct {
 	Agent string `json:"agent"`
 }) ToolResult {
-	agent := "baron"
+	agent := defaultAgent
 	if args != nil && args.Agent != "" {
 		agent = args.Agent
 	}
@@ -178,7 +178,7 @@ func processMail(agent string) (string, error) {
 			continue
 		}
 
-		err = sendSMTP(senderEmail, "Re: "+subject, reply)
+		err = sendSMTP("", "", senderEmail, "Re: "+subject, reply)
 		if err != nil {
 			results = append(results, fmt.Sprintf("❌ %s: SMTP error: %v", e.Name(), err))
 			continue
@@ -317,13 +317,20 @@ func extractBodyViaPerl(raw string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// sendSMTP sends an email via Perl SMTP and saves sent copy
-func sendSMTP(to, subject, body string) error {
+// sendSMTP sends an email via Perl SMTP and saves sent copy.
+// Pass empty fromName/fromAddr to use defaults ("Барон" <baron@matrica.work>).
+func sendSMTP(fromName, fromAddr, to, subject, body string) error {
 	key := os.Getenv("BREVO_SMTP_KEY")
 	if key == "" {
 		return fmt.Errorf("BREVO_SMTP_KEY not set")
 	}
-	cmd := exec.Command("perl", "-e", sendPerlScript, to, subject, body)
+	if fromName == "" {
+		fromName = defaultFromName
+	}
+	if fromAddr == "" {
+		fromAddr = defaultFromAddr
+	}
+	cmd := exec.Command("perl", "-e", sendPerlScript, fromName, fromAddr, to, subject, body)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("SMTP: %s (exit %v)", strings.TrimSpace(string(out)), err)

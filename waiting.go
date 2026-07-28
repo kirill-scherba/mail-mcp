@@ -209,7 +209,7 @@ func handleWaitingCreate(args json.RawMessage) ToolResult {
 	var p waitingCreateArgs
 	json.Unmarshal(args, &p)
 	if p.Agent == "" {
-		p.Agent = "baron"
+		p.Agent = defaultAgent
 	}
 	if len(p.Needs) == 0 {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "needs list is empty"}}}
@@ -222,7 +222,7 @@ func handleWaitingCreate(args json.RawMessage) ToolResult {
 			status = "asked"
 			// Send the question email to the person
 			go func(who, question string) {
-				sendSMTP(who, "Вопрос: "+p.Subject, question)
+				sendSMTP("", "", who, "Вопрос: "+p.Subject, question)
 			}(n.Who, n.Question)
 		}
 		w.Needs = append(w.Needs, WaitingNeed{
@@ -245,7 +245,7 @@ func handleWaitingList(args json.RawMessage) ToolResult {
 	}
 	json.Unmarshal(args, &p)
 	if p.Agent == "" {
-		p.Agent = "baron"
+		p.Agent = defaultAgent
 	}
 	items := waitingLoad(p.Agent)
 	if len(items) == 0 {
