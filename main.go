@@ -117,11 +117,12 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "mail_read",
-			Description: "Read a full email by filename. Decodes headers and body. Marks as read.",
+			Description: "Read a full email by filename. Decodes headers and body. Marks as read (inbox only).",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"mailbox": {"type": "string", "description": "Mailbox name", "default": "baron"},
+					"folder":  {"type": "string", "description": "Folder: inbox (default) or sent", "default": "inbox"},
 					"file": {"type": "string", "description": "Email filename (e.g. 20260726_133524_4046661.eml)"}
 				},
 				"required": ["file"]
@@ -326,12 +327,18 @@ func handleMailList(args json.RawMessage) ToolResult {
 func handleMailRead(args json.RawMessage) ToolResult {
 	var params struct {
 		Mailbox string `json:"mailbox"`
+		Folder  string `json:"folder"`
 		File    string `json:"file"`
 	}
 	json.Unmarshal(args, &params)
 	if params.Mailbox == "" { params.Mailbox = "baron" }
+	if params.Folder == "" { params.Folder = "inbox" }
 
-	emailPath := MailDir + "/" + params.Mailbox + "/" + params.File
+	basePath := MailDir + "/" + params.Mailbox
+	if params.Folder == "sent" {
+		basePath += "/sent"
+	}
+	emailPath := basePath + "/" + params.File
 	if _, err := os.Stat(emailPath); os.IsNotExist(err) {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Email not found"}}}
 	}
@@ -345,9 +352,11 @@ func handleMailRead(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Parse error: " + err.Error()}}}
 	}
 
-	// Mark as read
-	readFile := MailDir + "/" + params.Mailbox + "/." + params.File + ".read"
-	os.WriteFile(readFile, []byte{}, 0644)
+	// Mark as read (only for inbox, sent are outgoing copies)
+	if params.Folder != "sent" {
+		readFile := MailDir + "/" + params.Mailbox + "/." + params.File + ".read"
+		os.WriteFile(readFile, []byte{}, 0644)
+	}
 
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(out)}}}
 }
