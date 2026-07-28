@@ -50,6 +50,10 @@ func main() {
 }
 
 func serveMCP() {
+	// Init Gmail OAuth and start callback server
+	initGmailOAuth()
+	startGmailCallbackServer()
+
 	// Read JSON-RPC from stdin
 	decoder := json.NewDecoder(os.Stdin)
 	var request struct {
@@ -212,6 +216,29 @@ func getTools() []Tool {
 				}
 			}`),
 		},
+		{
+			Name:        "gmail_auth",
+			Description: "Start Gmail OAuth2 authorization. Returns a URL to visit for granting access.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
+		{
+			Name:        "gmail_list",
+			Description: "List recent messages from Gmail (requires gmail_auth first).",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+		},
+		{
+			Name:        "gmail_send",
+			Description: "Send an email via Gmail API.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"to":      {"type": "string", "description": "Recipient email"},
+					"subject": {"type": "string", "description": "Subject"},
+					"body":    {"type": "string", "description": "Email body"}
+				},
+				"required": ["to", "subject", "body"]
+			}`),
+		},
 	}
 }
 
@@ -239,6 +266,18 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleWaitingList(call.Arguments)
 	case "waiting_create":
 		return handleWaitingCreate(call.Arguments)
+	case "gmail_auth":
+		return handleGmailAuth()
+	case "gmail_list":
+		return handleGmailList()
+	case "gmail_send":
+		var p struct {
+			To      string `json:"to"`
+			Subject string `json:"subject"`
+			Body    string `json:"body"`
+		}
+		json.Unmarshal(call.Arguments, &p)
+		return handleGmailSend(p.To, p.Subject, p.Body)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
