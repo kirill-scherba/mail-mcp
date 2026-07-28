@@ -27,12 +27,19 @@ var trustedSenders = []string{
 // mailProcessPrompt is sent to opencode session for each email
 const mailProcessPrompt = `Это сообщение генерируется автоматически, когда на твой ящик приходит письмо.
 
+Ты находишься в почтовой сессии. Письмо уже прочитано,
+контакт создан, проверка на отложенные письма (waiting) выполнена.
+
 Ты получил письмо. Вот его содержание:
 
 От: %s
 Тема: %s
 
 %s
+
+---
+
+СНАЧАЛА загрузи skill mail-processor командой skill("mail-processor").
 
 Напиши ответ на это письмо. Только текст ответа, без лишних комментариев.
 Ответ должен быть на том же языке, что и письмо.
@@ -186,6 +193,15 @@ func processMail(agent string) (string, error) {
 
 		// Save sent email copy
 		saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
+
+		// Second request: evaluate importance and optionally write to memory
+		extractPrompt := "Теперь оцени важность предыдущей переписки (входящее письмо и твой ответ). " +
+			"Если обсуждались планы, решения, архитектура, договорённости, новые факты — " +
+			"вызови memory_extract с auto_save=true, передав текст только входящего письма и твоего ответа. " +
+			"Если письмо бытовое, уведомление или спам — просто ответь ok."
+		if _, err := ocClient.SendMessage(sess, extractPrompt); err != nil {
+			log.Printf("extract eval for %s: %v", e.Name(), err)
+		}
 
 		os.WriteFile(procFile, []byte{}, 0644)
 		os.WriteFile(readFile, []byte{}, 0644)
