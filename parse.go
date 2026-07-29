@@ -20,15 +20,35 @@ print "Subject: " . decode('MIME-Header', $email->header('Subject')) . "\n";
 print "Date: "    . $email->header('Date')    . "\n";
 print "---\n";
 
-# Find text/plain part (preferred) or fallback to first part
+# Find text/plain part (preferred) or decode HTML/other
+my $found = 0;
 for my $part ($email->parts) {
     my $ct = $part->content_type || '';
     if ($ct =~ m|text/plain|i) {
         print $part->body_str;
+        $found = 1;
         last;
     }
 }
-if (!scalar($email->parts)) {
+if (!$found) {
+    for my $part ($email->parts) {
+        my $ct = $part->content_type || '';
+        if ($ct =~ m|text/html|i) {
+            my $body = $part->body_str;
+            $body =~ s/<[^>]+>//g;
+            $body =~ s/&nbsp;/ /g;
+            $body =~ s/&lt;/</g;
+            $body =~ s/&gt;/>/g;
+            $body =~ s/&amp;/\&/g;
+            $body =~ s/&quot;/"/g;
+            $body =~ s/^\s+|\s+$//;
+            print $body;
+            $found = 1;
+            last;
+        }
+    }
+}
+if (!$found && !scalar($email->parts)) {
     print $email->body_str;
 }
 `
