@@ -78,7 +78,7 @@ func handleInboxPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract attachments
-	extractAttachments(mboxDir, fname, body)
+	ensureAttachments(mboxDir, fname, body)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -100,37 +100,55 @@ func extractMailboxFromRaw(raw []byte) string {
 	return m2[1]
 }
 
-// extractAttachments saves attachments from a raw email into an attachments subdir.
-func extractAttachments(mboxDir, emlName string, raw []byte) {
-	// Write raw email to a temp file so Perl can parse it
+// ensureAttachments returns attachment file names for the given email.
+// If the attachment directory already exists, returns its contents.
+// Otherwise, extracts attachments from the raw email via Perl.
+func ensureAttachments(mboxDir, emlName string, raw []byte) []string {
+	attDir := mboxDir + "/attachments/" + emlName
+	// Already extracted?
+	if entries, err := os.ReadDir(attDir); err == nil && len(entries) > 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		return names
+	}
+
+	// Extract via Perl
 	tmpFile := mboxDir + "/." + emlName + ".tmp"
 	if err := os.WriteFile(tmpFile, raw, 0644); err != nil {
 		log.Printf("attachments tmp write %s: %v", emlName, err)
-		return
+		return nil
 	}
 	defer os.Remove(tmpFile)
 
-	// Call Perl to extract attachments — it returns count
-	// We create attDir only if there are actual attachments.
 	tmpOut := mboxDir + "/." + emlName + ".att"
+	os.MkdirAll(tmpOut, 0755)
 	cmd := exec.Command("perl", "-e", extractAttachPerlScript, tmpFile, tmpOut)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("attachments extract %s: %s (err: %v)", emlName, string(out), err)
 		os.RemoveAll(tmpOut)
-		return
+		return nil
 	}
 
-	// If Perl created files in tmpOut, move them to final dir
-	if entries, _ := os.ReadDir(tmpOut); len(entries) > 0 {
-		attDir := mboxDir + "/attachments/" + emlName
-		os.MkdirAll(attDir, 0755)
-		if err := os.Rename(tmpOut, attDir); err != nil {
-			log.Printf("attachments move %s: %v", emlName, err)
-		}
-	} else {
+	entries, err := os.ReadDir(tmpOut)
+	if err != nil || len(entries) == 0 {
 		os.RemoveAll(tmpOut)
+		return nil
 	}
 
-	log.Printf("attachments for %s: %s", emlName, string(out))
+	os.RemoveAll(attDir)
+	if err := os.Rename(tmpOut, attDir); err != nil {
+		log.Printf("attachments move %s: %v", emlName, err)
+		os.RemoveAll(tmpOut)
+		return nil
+	}
+
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	log.Printf("attachments for %s: %v", emlName, names)
+	return names
 }

@@ -70,6 +70,8 @@ for my $part ($email->parts) {
     my $ct = $part->content_type || '';
     if ($ct =~ m|multipart/|i) {
         for my $sub ($part->parts) {
+            # Only save parts that have a filename (attachments)
+            next unless $sub->filename;
             save_part($sub, $idx++);
         }
     } elsif ($part->filename) {
