@@ -24,6 +24,7 @@ type Contact struct {
 	LastSeen  string `json:"last_seen,omitempty"`
 	TotalMail int    `json:"total_mail"`
 	IsSpam    bool   `json:"is_spam,omitempty"`
+	Locked    bool   `json:"locked,omitempty"`
 }
 
 func contactKey(email string) string {
@@ -67,7 +68,7 @@ func handleContactSave(args json.RawMessage) ToolResult {
 
 	c.Email = p.Email
 	if p.Name != "" { c.Name = p.Name }
-	if p.Who != "" { c.Who = p.Who }
+	if p.Who != "" && !c.Locked { c.Who = p.Who }
 	if p.Summary != "" { c.Summary = p.Summary }
 	if c.FirstSeen == "" { c.FirstSeen = time.Now().UTC().Format("2006-01-02") }
 	c.LastSeen = time.Now().UTC().Format("2006-01-02")

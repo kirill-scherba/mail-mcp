@@ -143,36 +143,52 @@ func processMail(agent string) (string, error) {
 			}
 		}
 
-		// Build context from recent emails with this sender
-		context := buildSenderContext(mboxDir, senderEmail, e.Name())
-		// Check waiting items for status summary
-		waitingSummary := waitingCheck(agent)
+		// Determine if this is a new conversation or existing session
+		isNewSession := true
+		if entry := sessionStore.Get(senderEmail); entry != nil && entry.Count > 0 {
+			isNewSession = false
+		}
 
-		prompt := mailProcessPrompt
-		var prefixParts []string
-		if contactStr != "" {
-			prefixParts = append(prefixParts, contactStr)
-		}
-		if waitingSummary != "" {
-			prefixParts = append(prefixParts, waitingSummary)
-		}
-		if context != "" {
-			prefixParts = append(prefixParts, "Вот последние письма с этим собеседником:\n"+context)
-		}
 		// Attachments
 		attachments := ensureAttachments(mboxDir, e.Name(), data)
-		if len(attachments) > 0 {
-			var attLines []string
-			for _, name := range attachments {
-				path := mboxDir + "/attachments/" + e.Name() + "/" + name
-				attLines = append(attLines, fmt.Sprintf("- %s — %s", name, path))
+
+		var prompt string
+		if isNewSession {
+			// Full prompt with context for the first email
+			context := buildSenderContext(mboxDir, senderEmail, e.Name())
+			waitingSummary := waitingCheck(agent)
+
+			var prefixParts []string
+			if contactStr != "" {
+				prefixParts = append(prefixParts, contactStr)
 			}
-			prefixParts = append(prefixParts, "К письму приложены файлы:\n"+strings.Join(attLines, "\n"))
+			if waitingSummary != "" {
+				prefixParts = append(prefixParts, waitingSummary)
+			}
+			if context != "" {
+				prefixParts = append(prefixParts, "Вот последние письма с этим собеседником:\n"+context)
+			}
+			if len(attachments) > 0 {
+				var attLines []string
+				for _, name := range attachments {
+					path := mboxDir + "/attachments/" + e.Name() + "/" + name
+					attLines = append(attLines, fmt.Sprintf("- %s — %s", name, path))
+				}
+				prefixParts = append(prefixParts, "К письму приложены файлы:\n"+strings.Join(attLines, "\n"))
+			}
+			prompt = mailProcessPrompt
+			if len(prefixParts) > 0 {
+				prompt = strings.Join(prefixParts, "\n\n") + "\n\n---\n\n" + mailProcessPrompt
+			}
+			prompt = fmt.Sprintf(prompt, from, subject, body)
+		} else {
+			// Short prompt for existing session — only new email + reply instruction
+			attStr := ""
+			if len(attachments) > 0 {
+				attStr = "\n\nК письму приложены файлы в /srv/mail/baron/attachments/ " + e.Name() + "/"
+			}
+			prompt = fmt.Sprintf("Новое письмо от %s:\n\n%s\n%s\n\nНапиши ответ на это письмо. Только текст ответа, без лишних комментариев.", from, body, attStr)
 		}
-		if len(prefixParts) > 0 {
-			prompt = strings.Join(prefixParts, "\n\n") + "\n\n---\n\n" + mailProcessPrompt
-		}
-		prompt = fmt.Sprintf(prompt, from, subject, body)
 
 		sess, err := getOrCreateSession(ocClient, sessionStore, senderEmail, agent)
 		if err != nil {
@@ -215,11 +231,11 @@ func processMail(agent string) (string, error) {
 			saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
 		}
 
-		// Second request: evaluate importance and optionally write to memory
-		extractPrompt := "Теперь оцени важность предыдущей переписки (входящее письмо и твой ответ). " +
-			"Если обсуждались планы, решения, архитектура, договорённости, новые факты — " +
-			"вызови memory_extract с auto_save=true, передав текст только входящего письма и твоего ответа. " +
-			"Если письмо бытовое, уведомление или спам — просто ответь ok."
+		// Second request: evaluate importance, update contact, optionally write to memory
+		extractPrompt := "Оцени важность переписки и обнови контакт отправителя.\n\n" +
+			"1. Если обсуждались планы, решения, архитектура, договорённости, новые факты — вызови memory_extract с auto_save=true, передав текст только входящего письма и твоего ответа.\n" +
+			"2. Если контакт отправителя (" + senderEmail + ") новый (who пустой) — опиши его через contact_save(who=\"...\"). Если locked — не меняй who, но можешь дополнить summary. Не перезаписывай locked-поля.\n" +
+			"3. Если письмо бытовое, уведомление или спам — просто ответь ok."
 		if _, err := ocClient.SendMessage(sess, extractPrompt); err != nil {
 			log.Printf("extract eval for %s: %v", e.Name(), err)
 		}
