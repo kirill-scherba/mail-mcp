@@ -203,14 +203,17 @@ func processMail(agent string) (string, error) {
 			}
 		}
 
-		err = sendSMTP("", "", senderEmail, "Re: "+subject, reply)
-		if err != nil {
-			results = append(results, fmt.Sprintf("❌ %s: SMTP error: %v", e.Name(), err))
-			continue
-		}
+		// Skip sending if agent already replied via mail_send (returned "OK")
+		if strings.ToLower(strings.TrimSpace(reply)) != "ok" {
+			err = sendSMTP("", "", senderEmail, "Re: "+subject, reply)
+			if err != nil {
+				results = append(results, fmt.Sprintf("❌ %s: SMTP error: %v", e.Name(), err))
+				continue
+			}
 
-		// Save sent email copy
-		saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
+			// Save sent email copy
+			saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
+		}
 
 		// Second request: evaluate importance and optionally write to memory
 		extractPrompt := "Теперь оцени важность предыдущей переписки (входящее письмо и твой ответ). " +

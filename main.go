@@ -57,6 +57,8 @@ func serveMCP() {
 	startGmailCallbackServer()
 	// Start inbox server (replaces mail-server.pl)
 	startInboxServer()
+	// Start periodic mail poller
+	startMailPoller()
 
 	// Read JSON-RPC from stdin
 	decoder := json.NewDecoder(os.Stdin)
