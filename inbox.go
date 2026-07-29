@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/quotedprintable"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -59,6 +61,11 @@ func handleInboxPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil || len(body) == 0 {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+
+	// Decode quoted-printable (Cloudflare encodes multipart as QP)
+	if decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(string(body)))); err == nil && len(decoded) > 0 {
+		body = decoded
 	}
 
 	// Determine mailbox from To: header (local-part@matrica.work)
@@ -112,6 +119,12 @@ func ensureAttachments(mboxDir, emlName string, raw []byte) []string {
 			names[i] = e.Name()
 		}
 		return names
+	}
+
+	// Decode quoted-printable (Cloudflare encodes multipart as QP)
+	decoded, decErr := io.ReadAll(quotedprintable.NewReader(strings.NewReader(string(raw))))
+	if decErr == nil && len(decoded) > 0 {
+		raw = decoded
 	}
 
 	// Extract via Perl

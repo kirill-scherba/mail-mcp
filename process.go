@@ -355,6 +355,7 @@ func extractBodyViaPerl(raw string) string {
 
 // sendSMTP sends an email via Perl SMTP and saves sent copy.
 // Pass empty fromName/fromAddr to use defaults ("Барон" <baron@matrica.work>).
+// Body is passed via stdin to avoid ARG_MAX limits.
 func sendSMTP(fromName, fromAddr, to, subject, body string) error {
 	key := os.Getenv("BREVO_SMTP_KEY")
 	if key == "" {
@@ -366,7 +367,8 @@ func sendSMTP(fromName, fromAddr, to, subject, body string) error {
 	if fromAddr == "" {
 		fromAddr = defaultFromAddr
 	}
-	cmd := exec.Command("perl", "-e", sendPerlScript, fromName, fromAddr, to, subject, body)
+	cmd := exec.Command("perl", "-e", sendPerlScript, fromName, fromAddr, to, subject)
+	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("SMTP: %s (exit %v)", strings.TrimSpace(string(out)), err)

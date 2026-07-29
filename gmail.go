@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -179,17 +180,36 @@ func handleGmailList() ToolResult {
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(data)}}}
 }
 
-// handleGmailSend sends an email via Gmail API
-func handleGmailSend(to, subject, body string) ToolResult {
+// handleGmailSend sends an email via Gmail API, optionally with attachment.
+func handleGmailSend(to, subject, body, attachmentPath string) ToolResult {
 	client, err := gmailHTTPClient()
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
 
 	subjectEnc := mime.BEncoding.Encode("utf-8", subject)
-	raw := fmt.Sprintf("From: me\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", to, subjectEnc, body)
-	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	var raw string
 
+	if attachmentPath == "" {
+		// Plain text
+		raw = fmt.Sprintf("From: me\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", to, subjectEnc, body)
+	} else {
+		// Multipart with attachment
+		attData, err := os.ReadFile(attachmentPath)
+		if err != nil {
+			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("attachment read error: %v", err)}}}
+		}
+		boundary := "boundary_123_matrica"
+		_, attName := filepath.Split(attachmentPath)
+		attB64 := base64.StdEncoding.EncodeToString(attData)
+		raw = fmt.Sprintf("From: me\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=%s\r\n\r\n--%s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n--%s\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"%s\"\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--%s--",
+			to, subjectEnc, boundary,
+			boundary, body,
+			boundary, attName, attB64,
+			boundary)
+	}
+
+	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
 	payload := fmt.Sprintf(`{"raw":"%s"}`, encoded)
 	resp, err := client.Post(gmailAPIBase+"/messages/send", "application/json", strings.NewReader(payload))
 	if err != nil {
