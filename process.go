@@ -159,6 +159,16 @@ func processMail(agent string) (string, error) {
 		if context != "" {
 			prefixParts = append(prefixParts, "Вот последние письма с этим собеседником:\n"+context)
 		}
+		// Attachments
+		attachments := ensureAttachments(mboxDir, e.Name(), data)
+		if len(attachments) > 0 {
+			var attLines []string
+			for _, name := range attachments {
+				path := mboxDir + "/attachments/" + e.Name() + "/" + name
+				attLines = append(attLines, fmt.Sprintf("- %s — %s", name, path))
+			}
+			prefixParts = append(prefixParts, "К письму приложены файлы:\n"+strings.Join(attLines, "\n"))
+		}
 		if len(prefixParts) > 0 {
 			prompt = strings.Join(prefixParts, "\n\n") + "\n\n---\n\n" + mailProcessPrompt
 		}

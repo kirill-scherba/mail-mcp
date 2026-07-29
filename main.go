@@ -405,6 +405,18 @@ func handleMailRead(args json.RawMessage) ToolResult {
 		os.WriteFile(readFile, []byte{}, 0644)
 	}
 
+	// Check for extracted attachments and append to output
+	raw, _ := os.ReadFile(emailPath)
+	attachments := ensureAttachments(MailDir+"/"+params.Mailbox, params.File, raw)
+	if len(attachments) > 0 {
+		result := string(out) + "\n\n---\nВложения:\n"
+		for _, name := range attachments {
+			path := MailDir + "/" + params.Mailbox + "/attachments/" + params.File + "/" + name
+			result += fmt.Sprintf("- %s — %s\n", name, path)
+		}
+		return ToolResult{Content: []ContentItem{{Type: "text", Text: result}}}
+	}
+
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(out)}}}
 }
 
