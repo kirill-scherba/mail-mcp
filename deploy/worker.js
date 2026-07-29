@@ -5,7 +5,10 @@ export default {
     const raw = await new Response(message.raw).text()
     await fetch('https://a-mail.matrica.work/mail/inbox', {
       method: 'POST',
-      headers: {'Content-Type': 'message/rfc822'},
+      headers: {
+        'Content-Type': 'message/rfc822',
+        'X-Inbox-Secret': env.INBOX_SECRET || ''
+      },
       body: raw
     })
   }

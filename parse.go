@@ -32,3 +32,50 @@ if (!scalar($email->parts)) {
     print $email->body_str;
 }
 `
+
+// extractAttachPerlScript reads a raw email from a file (argv[0]),
+// saves all attachments to a directory (argv[1]).
+var extractAttachPerlScript = `
+use strict;
+use Email::MIME;
+use File::Basename;
+use MIME::Base64;
+
+my ($file, $outdir) = @ARGV;
+die "Usage: $0 <eml_file> <outdir>" unless $file && $outdir;
+
+open(my $fh, '<:raw', $file) or die "open $file: $!";
+my $raw = do { local $/; <$fh> };
+close $fh;
+
+my $email = Email::MIME->new($raw);
+my $count = 0;
+
+sub save_part {
+    my ($part, $index) = @_;
+    my $ct = $part->content_type || 'application/octet-stream';
+    my $fn = $part->filename || "attachment_$index";
+    $fn =~ s/[^\w.-]//g;
+    $fn = "attachment_$index.dat" unless $fn;
+
+    my $body = $part->body;
+    open(my $out, '>:raw', "$outdir/$fn") or warn "save $fn: $!";
+    print $out $body if $out;
+    close $out if $out;
+    $count++;
+}
+
+my $idx = 0;
+for my $part ($email->parts) {
+    my $ct = $part->content_type || '';
+    if ($ct =~ m|multipart/|i) {
+        for my $sub ($part->parts) {
+            save_part($sub, $idx++);
+        }
+    } elsif ($part->filename) {
+        save_part($part, $idx++);
+    }
+}
+
+print "extracted $count attachment(s) to $outdir\n";
+`
