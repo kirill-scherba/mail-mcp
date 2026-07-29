@@ -8,17 +8,29 @@ var sendPerlScript = `
 use strict;
 use Net::SMTP;
 
-my ($from_name, $from_addr, $to, $subject, $body) = @ARGV;
-die "Missing args" unless $to && $subject && $body;
+my ($from_name, $from_addr, $to, $subject) = @ARGV;
+die "Missing args" unless $to && $subject;
+
+# Read body from stdin (to avoid ARG_MAX limits)
+my $body = do { local $/; <STDIN> };
+die "Empty body" unless $body;
+
 $from_name = "Барон" unless $from_name;
 $from_addr = "baron\@matrica.work" unless $from_addr;
 
-my $msg = "From: $from_name <$from_addr>\015\012"
+my $headers = "From: $from_name <$from_addr>\015\012"
         . "To: $to\015\012"
-        . "Subject: $subject\015\012"
-        . "Content-Type: text/plain; charset=UTF-8\015\012"
-        . "\015\012"
-        . $body;
+        . "Subject: $subject\015\012";
+
+# If body contains Content-Type as first line, move it to headers
+if ($body =~ s/^(Content-Type:.*\015?\012)//) {
+    $headers .= $1 . "MIME-Version: 1.0\015\012";
+} else {
+    $headers .= "MIME-Version: 1.0\015\012"
+              . "Content-Type: text/plain; charset=UTF-8\015\012";
+}
+
+my $msg = $headers . "\015\012" . $body;
 
 my $smtp = Net::SMTP->new("smtp-relay.brevo.com",
     Port => 587, Timeout => 30, Hello => "matrica.work")

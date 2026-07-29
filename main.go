@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -142,13 +144,14 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "mail_send",
-			Description: "Send an email via Brevo SMTP.",
+			Description: "Send an email via Brevo SMTP. Optionally attach a file.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"to":      {"type": "string", "description": "Recipient email"},
 					"subject": {"type": "string", "description": "Email subject"},
-					"body":    {"type": "string", "description": "Email body text"}
+					"body":    {"type": "string", "description": "Email body text"},
+					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"}
 				},
 				"required": ["to", "subject", "body"]
 			}`),
@@ -230,13 +233,14 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "gmail_send",
-			Description: "Send an email via Gmail API.",
+			Description: "Send an email via Gmail API. Optionally attach a file.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"to":      {"type": "string", "description": "Recipient email"},
 					"subject": {"type": "string", "description": "Subject"},
-					"body":    {"type": "string", "description": "Email body"}
+					"body":    {"type": "string", "description": "Email body"},
+					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"}
 				},
 				"required": ["to", "subject", "body"]
 			}`),
@@ -274,12 +278,13 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleGmailList()
 	case "gmail_send":
 		var p struct {
-			To      string `json:"to"`
-			Subject string `json:"subject"`
-			Body    string `json:"body"`
+			To             string `json:"to"`
+			Subject        string `json:"subject"`
+			Body           string `json:"body"`
+			AttachmentPath string `json:"attachment_path"`
 		}
 		json.Unmarshal(call.Arguments, &p)
-		return handleGmailSend(p.To, p.Subject, p.Body)
+		return handleGmailSend(p.To, p.Subject, p.Body, p.AttachmentPath)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
@@ -422,9 +427,10 @@ func handleMailRead(args json.RawMessage) ToolResult {
 
 func handleMailSend(args json.RawMessage) ToolResult {
 	var params struct {
-		To      string `json:"to"`
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
+		To             string `json:"to"`
+		Subject        string `json:"subject"`
+		Body           string `json:"body"`
+		AttachmentPath string `json:"attachment_path"`
 	}
 	json.Unmarshal(args, &params)
 
@@ -432,14 +438,32 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Missing required fields"}}}
 	}
 
-	// Call Perl to send via Brevo SMTP relay
-	cmd := exec.Command("perl", "-e", sendPerlScript,
-		defaultFromName, defaultFromAddr, params.To, params.Subject, params.Body)
-
-	out, err := cmd.Output()
-	if err != nil {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Send error: " + string(out) + err.Error()}}}
+	sendBody := params.Body
+	if params.AttachmentPath != "" {
+		attData, err := os.ReadFile(params.AttachmentPath)
+		if err != nil {
+			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("attachment read error: %v", err)}}}
+		}
+		boundary := "matrica_boundary_123456"
+		_, attName := filepath.Split(params.AttachmentPath)
+		attB64raw := base64.StdEncoding.EncodeToString(attData)
+		// Split base64 into 76-char lines
+		var attB64 strings.Builder
+		for i := 0; i < len(attB64raw); i += 76 {
+			end := i + 76
+			if end > len(attB64raw) { end = len(attB64raw) }
+			attB64.WriteString(attB64raw[i:end] + "\r\n")
+		}
+		// Only the body after headers: boundary + text + boundary + attachment
+		sendBody = fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\nMIME-Version: 1.0\r\n\r\n--%s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n--%s\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"%s\"\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--%s--",
+			boundary, boundary, params.Body,
+			boundary, attName, attB64.String(), boundary)
 	}
 
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: "✅ " + string(out)}}}
+	// Send via Brevo SMTP (stdin to avoid ARG_MAX)
+	if err := sendSMTP(defaultFromName, defaultFromAddr, params.To, params.Subject, sendBody); err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Send error: " + err.Error()}}}
+	}
+
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: "✅ Sent"}}}
 }
