@@ -247,6 +247,29 @@ func getTools() []Tool {
 				"required": ["to", "subject", "body"]
 			}`),
 		},
+		{
+			Name:        "gmail_read",
+			Description: "Read a full Gmail message by ID.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "string", "description": "Gmail message ID"}
+				},
+				"required": ["id"]
+			}`),
+		},
+		{
+			Name:        "gmail_search",
+			Description: "Search Gmail messages by query and read them.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Search query (e.g. 'from:bank subject:invoice')"},
+					"limit": {"type": "integer", "description": "Max results (default 10)"}
+				},
+				"required": ["query"]
+			}`),
+		},
 	}
 }
 
@@ -287,6 +310,19 @@ func handleToolCall(call ToolCall) ToolResult {
 		}
 		json.Unmarshal(call.Arguments, &p)
 		return handleGmailSend(p.To, p.Subject, p.Body, p.AttachmentPath)
+	case "gmail_read":
+		var p struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &p)
+		return handleGmailRead(p.ID)
+	case "gmail_search":
+		var p struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &p)
+		return handleGmailSearch(p.Query, p.Limit)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}

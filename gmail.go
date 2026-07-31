@@ -9,11 +9,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -178,6 +181,167 @@ func handleGmailList() ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(data)}}}
+}
+
+// handleGmailRead reads a full Gmail message by ID
+func handleGmailRead(messageID string) ToolResult {
+	client, err := gmailHTTPClient()
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
+	}
+
+	url := gmailAPIBase + "/messages/" + messageID + "?format=full"
+	resp, err := client.Get(url)
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %v", err)}}}
+	}
+	defer resp.Body.Close()
+
+	buf, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %s", resp.Status)}}}
+	}
+
+	// Parse and format
+	var msg struct {
+		ID      string `json:"id"`
+		Thread  string `json:"threadId"`
+		Snippet string `json:"snippet"`
+		Payload struct {
+			Headers []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"headers"`
+			MimeType string `json:"mimeType"`
+			Body     struct {
+				Data string `json:"data"`
+			} `json:"body"`
+			Parts []struct {
+				MimeType string `json:"mimeType"`
+				Filename string `json:"filename"`
+				Body     struct {
+					Data string `json:"data"`
+				} `json:"body"`
+			} `json:"parts"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(buf, &msg); err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("parse error: %v", err)}}}
+	}
+
+	headers := map[string]string{}
+	for _, h := range msg.Payload.Headers {
+		headers[strings.ToLower(h.Name)] = h.Value
+	}
+
+	var sb strings.Builder
+	sb.WriteString("From: " + headers["from"] + "\n")
+	sb.WriteString("To: " + headers["to"] + "\n")
+	sb.WriteString("Subject: " + headers["subject"] + "\n")
+	sb.WriteString("Date: " + headers["date"] + "\n")
+	sb.WriteString("---\n")
+
+	// Find text/plain body (first part or root)
+	bodyText := ""
+	if msg.Payload.Body.Data != "" {
+		bodyText = decodeBase64Str(msg.Payload.Body.Data)
+	} else {
+		for _, p := range msg.Payload.Parts {
+			if p.MimeType == "text/plain" && p.Body.Data != "" {
+				bodyText = decodeBase64Str(p.Body.Data)
+				break
+			}
+		}
+	}
+	if bodyText == "" {
+		bodyText = msg.Snippet
+	}
+	// Strip HTML if body is HTML
+	if strings.Contains(bodyText, "<") && strings.Contains(bodyText, ">") {
+		bodyText = stripHTML(bodyText)
+	}
+	if bodyText == "" {
+		bodyText = msg.Snippet
+	}
+	sb.WriteString(bodyText)
+
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
+}
+
+// handleGmailSearch searches Gmail messages by query
+func handleGmailSearch(query string, limit int) ToolResult {
+	client, err := gmailHTTPClient()
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
+	}
+
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	q := url.QueryEscape(query)
+	u := gmailAPIBase + "/messages?q=" + q + "&maxResults=" + fmt.Sprintf("%d", limit)
+	resp, err := client.Get(u)
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %v", err)}}}
+	}
+	defer resp.Body.Close()
+
+	buf, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %s", resp.Status)}}}
+	}
+
+	var res struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+		ResultSizeEstimate int `json:"resultSizeEstimate"`
+	}
+	if err := json.Unmarshal(buf, &res); err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("parse error: %v", err)}}}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Найдено писем: %d (показано %d)\n\n", res.ResultSizeEstimate, len(res.Messages)))
+	for i, m := range res.Messages {
+		// Read each message briefly
+		content := handleGmailRead(m.ID)
+		sb.WriteString(fmt.Sprintf("[%d] ID: %s\n%s\n\n", i+1, m.ID, content.Content[0].Text))
+	}
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
+}
+
+// stripHTML removes HTML tags, style/script blocks, and decodes common entities
+func stripHTML(s string) string {
+	// Remove style and script blocks entirely
+	blockRe := regexp.MustCompile(`(?is)<(style|script)[^>]*>.*?</\1>`)
+	s = blockRe.ReplaceAllString(s, " ")
+	// Remove comments
+	s = regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(s, " ")
+	// Remove remaining tags
+	re := regexp.MustCompile(`<[^>]+>`)
+	s = re.ReplaceAllString(s, " ")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	// Collapse multiple spaces
+	space := regexp.MustCompile(`\s+`)
+	s = space.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+// decodeBase64Str decodes base64 (with URL-safe variant support)
+func decodeBase64Str(s string) string {
+	if decoded, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return string(decoded)
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return string(decoded)
+	}
+	return s
 }
 
 // handleGmailSend sends an email via Gmail API, optionally with attachment.
