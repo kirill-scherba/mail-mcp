@@ -222,7 +222,8 @@ func handleWaitingCreate(args json.RawMessage) ToolResult {
 			status = "asked"
 			// Send the question email to the person
 			go func(who, question string) {
-				sendSMTP("", "", who, "Вопрос: "+p.Subject, question)
+				// Waiting questions are brand-new emails, not replies.
+				sendSMTP("", "", who, "Вопрос: "+p.Subject, question, "")
 			}(n.Who, n.Question)
 		}
 		w.Needs = append(w.Needs, WaitingNeed{

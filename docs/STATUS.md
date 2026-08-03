@@ -16,6 +16,7 @@
 - [x] README.md with docs
 - [x] Memory Bank (CONTEXT.md, STATUS.md, DESIGN.md)
 - [x] Copyright headers and function comments
+- [x] Fix email threading: set References/In-Reply-To on replies (#1)
 
 ## In progress
 
