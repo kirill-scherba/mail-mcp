@@ -8,7 +8,7 @@ var sendPerlScript = `
 use strict;
 use Net::SMTP;
 
-my ($from_name, $from_addr, $to, $subject) = @ARGV;
+my ($from_name, $from_addr, $to, $subject, $in_reply_to) = @ARGV;
 die "Missing args" unless $to && $subject;
 
 # Read body from stdin (to avoid ARG_MAX limits)
@@ -21,6 +21,12 @@ $from_addr = "baron\@matrica.work" unless $from_addr;
 my $headers = "From: $from_name <$from_addr>\015\012"
         . "To: $to\015\012"
         . "Subject: $subject\015\012";
+
+# Add threading headers when replying to an existing message
+if ($in_reply_to) {
+    $headers .= "In-Reply-To: $in_reply_to\015\012"
+            . "References: $in_reply_to\015\012";
+}
 
 # If body contains Content-Type as first line, move it to headers
 if ($body =~ s/^(Content-Type:.*\015?\012)//) {

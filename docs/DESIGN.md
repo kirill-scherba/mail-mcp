@@ -10,7 +10,7 @@
                                                   │
                                   ┌───────────────┴───────────────┐
                                   │  parse.go (Perl Email::MIME)   │
-                                  │  send.go (Python Brevo API)    │
+                                  │  send.go (Perl Brevo SMTP)     │
                                   └───────────────────────────────┘
 ```
 
@@ -25,7 +25,13 @@ SMTP → Cloudflare MX → Email Routing → Worker
 
 ### Outgoing email
 ```
-Agent → mail_send tool → Python script → Brevo API → SMTP → Recipient
+Agent → mail_send tool → Perl SMTP script → Brevo SMTP relay → Recipient
+
+Reply flow:
+process.go extracts Message-ID from incoming email
+  → sendSMTP passes it to the Perl script
+  → Perl adds In-Reply-To and References headers
+  → Brevo SMTP relay delivers the threaded reply
 ```
 
 ## Storage format

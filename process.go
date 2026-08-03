@@ -120,6 +120,7 @@ func processMail(agent string) (string, error) {
 		subject := extractHeader(string(data), "Subject")
 		// Clean subject from MIME glue stuck by some mail clients
 		subject = subjectRe.ReplaceAllString(subject, "")
+		originalMessageID := extractHeader(string(data), "Message-ID")
 		senderEmail := extractEmail(from)
 
 		if !isTrustedSender(from) {
@@ -238,7 +239,7 @@ func processMail(agent string) (string, error) {
 
 		// Skip sending if agent already replied via mail_send (returned "OK")
 		if strings.ToLower(strings.TrimSpace(reply)) != "ok" {
-			err = sendSMTP("", "", senderEmail, "Re: "+subject, reply)
+			err = sendSMTP("", "", senderEmail, "Re: "+subject, reply, originalMessageID)
 			if err != nil {
 				results = append(results, fmt.Sprintf("❌ %s: SMTP error: %v", e.Name(), err))
 				continue
@@ -391,8 +392,9 @@ func extractBodyViaPerl(raw string) string {
 
 // sendSMTP sends an email via Perl SMTP and saves sent copy.
 // Pass empty fromName/fromAddr to use defaults ("Барон" <baron@matrica.work>).
+// Pass empty inReplyTo for brand-new emails; for replies, pass the original Message-ID.
 // Body is passed via stdin to avoid ARG_MAX limits.
-func sendSMTP(fromName, fromAddr, to, subject, body string) error {
+func sendSMTP(fromName, fromAddr, to, subject, body, inReplyTo string) error {
 	key := os.Getenv("BREVO_SMTP_KEY")
 	if key == "" {
 		return fmt.Errorf("BREVO_SMTP_KEY not set")
@@ -403,7 +405,7 @@ func sendSMTP(fromName, fromAddr, to, subject, body string) error {
 	if fromAddr == "" {
 		fromAddr = defaultFromAddr
 	}
-	cmd := exec.Command("perl", "-e", sendPerlScript, fromName, fromAddr, to, subject)
+	cmd := exec.Command("perl", "-e", sendPerlScript, fromName, fromAddr, to, subject, inReplyTo)
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
