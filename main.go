@@ -503,5 +503,8 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Send error: " + err.Error()}}}
 	}
 
+	// Save sent copy
+	saveSentEmail(MailDir+"/"+defaultMailbox, params.To, params.Subject, params.Body)
+
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: "✅ Sent"}}}
 }
