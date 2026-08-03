@@ -463,7 +463,8 @@ func handleMailSend(args json.RawMessage) ToolResult {
 	}
 
 	// Send via Brevo SMTP (stdin to avoid ARG_MAX)
-	if err := sendSMTP(defaultFromName, defaultFromAddr, params.To, params.Subject, sendBody); err != nil {
+	// Empty inReplyTo: mail_send creates a brand-new email, not a reply.
+	if err := sendSMTP(defaultFromName, defaultFromAddr, params.To, params.Subject, sendBody, ""); err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Send error: " + err.Error()}}}
 	}
 
