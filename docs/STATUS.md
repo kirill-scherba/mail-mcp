@@ -12,7 +12,7 @@
 - [x] Let's Encrypt SSL for a-mail.matrica.work
 - [x] Registered in mcp-gateway and opencode
 - [x] Perl scripts extracted to parse.go as constants
-- [x] Python scripts extracted to send.go as constants
+- [x] Perl SMTP script extracted to send.go as constants
 - [x] README.md with docs
 - [x] Memory Bank (CONTEXT.md, STATUS.md, DESIGN.md)
 - [x] Copyright headers and function comments
