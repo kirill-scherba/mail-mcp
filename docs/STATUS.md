@@ -17,6 +17,7 @@
 - [x] Memory Bank (CONTEXT.md, STATUS.md, DESIGN.md)
 - [x] Copyright headers and function comments
 - [x] Fix email threading: set References/In-Reply-To on replies (#1)
+- [x] Write conversation summaries via contact.summary after every non-trivial email (#2)
 
 ## In progress
 
