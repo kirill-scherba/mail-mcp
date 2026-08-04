@@ -249,11 +249,29 @@ func processMail(agent string) (string, error) {
 			saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
 		}
 
-		// Second request: evaluate importance, update contact, optionally write to memory
-		extractPrompt := "Оцени важность переписки и обнови контакт отправителя.\n\n" +
-			"1. Если обсуждались планы, решения, архитектура, договорённости, новые факты — вызови memory_extract с auto_save=true, передав текст только входящего письма и твоего ответа.\n" +
-			"2. Если контакт отправителя (" + senderEmail + ") новый (who пустой) — опиши его через contact_save(who=\"...\"). Если locked — не меняй who, но можешь дополнить summary. Не перезаписывай locked-поля.\n" +
-			"3. Если письмо бытовое, уведомление или спам — просто ответь ok."
+		// Second request: evaluate importance, update contact summary, optionally write to memory
+		// Build context for cumulative summary update so the AI can keep the summary current.
+		extractContactContext := ""
+		if contact != nil {
+			if contact.Summary != "" {
+				extractContactContext = fmt.Sprintf("Текущее суммари переписки с %s: %s\n\n", senderEmail, contact.Summary)
+			} else {
+				extractContactContext = fmt.Sprintf("Переписка с %s ещё не имеет записанного суммари.\n\n", senderEmail)
+			}
+			if contact.Locked {
+				extractContactContext += "Контакт locked: не меняй поле who, но обязательно обнови summary.\n"
+			} else if contact.Who == "" {
+				extractContactContext += "Контакт новый: заполни who и summary через contact_save.\n"
+			}
+		}
+
+		extractPrompt := extractContactContext +
+			"Оцени переписку и обнови запись контакта отправителя (" + senderEmail + ").\n\n" +
+			"1. ОБЯЗАТЕЛЬНО: если это не спам/уведомление/бессмысленное письмо — напиши краткое суммари ВСЕЙ переписки с этим собеседником (включая последний обмен письмами) и обнови его через contact_save(summary=\"...\"). " +
+			"Суммари должно быть цельным, отражать актуальное состояние и заменить предыдущее. " +
+			"Если контакт новый — также задай who=\"...\". Если locked — не меняй who.\n" +
+			"2. Если обсуждались планы, решения, архитектура, договорённости, важные факты — вызови memory_extract с auto_save=true, передав текст входящего письма и твоего ответа.\n" +
+			"3. Если письмо бытовое, уведомление, спам или не требует запоминания — просто ответь ok (summary обновлять не нужно)."
 		if _, err := ocClient.SendMessage(sess, extractPrompt); err != nil {
 			log.Printf("extract eval for %s: %v", e.Name(), err)
 		}
