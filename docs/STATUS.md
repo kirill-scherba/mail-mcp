@@ -17,6 +17,7 @@
 - [x] Memory Bank (CONTEXT.md, STATUS.md, DESIGN.md)
 - [x] Copyright headers and function comments
 - [x] Fix email threading: set References/In-Reply-To on replies (#1)
+- [x] Tool: mail_attachment_get (MCP tool for attachment retrieval) (#3)
 
 ## In progress
 
@@ -26,5 +27,4 @@
 
 - API key hardcoded in send.go (should be env/config)
 - Email subjects in mail_list are raw (base64 encoded) — mail_read decodes them
-- No attachment handling in parser
 - No spam/security checks on incoming mail
