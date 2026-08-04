@@ -142,9 +142,9 @@ func getOrCreateSession(ocClient *opencodeclient.Client, store *SessionStore, em
 		return &opencodeclient.Session{ID: entry.SessionID, Agent: agent}, nil
 	}
 
-	// Create new session
+	// Create new session (source="mail" so the notifications plugin skips it)
 	sess, err := ocClient.CreateSession("mail-processor", agent,
-		"deepseek/deepseek-v4-flash", "",
+		"deepseek/deepseek-v4-flash", "", "mail",
 		[]opencodeclient.PermissionRule{
 			{Action: "Question", Permission: "deny"},
 			{Action: "Bash", Permission: "deny"},
