@@ -22,6 +22,7 @@ Outbound mail goes through Brevo SMTP API.
 | `mail_list` | List emails in a mailbox (paginated, unread filter) |
 | `mail_read` | Read a full email by filename, mark as read |
 | `mail_send` | Send an email via Brevo SMTP |
+| `mail_attachment_get` | Retrieve an attachment from a received email |
 
 ## Quick Start
 

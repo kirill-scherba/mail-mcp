@@ -13,6 +13,7 @@ ecosystem. It is fully functional: receive, list, read, and send email.
 - 2026-07-26: Brevo SMTP send integrated
 - 2026-07-26: Connected to mcp-gateway and opencode
 - 2026-08-03: Fix email threading (#1) — replies now carry In-Reply-To and References headers
+- 2026-08-04: Add mail_attachment_get MCP tool (#3) — retrieves already-extracted attachments to a safe temp path
 
 ## Decisions
 
