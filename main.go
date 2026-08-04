@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // MCP Tool definitions
@@ -270,6 +272,20 @@ func getTools() []Tool {
 				"required": ["query"]
 			}`),
 		},
+		{
+			Name:        "mail_attachment_get",
+			Description: "Retrieve an attachment from a received email. Saves the file to output_path (or /tmp/) and returns JSON with path, size, and MIME type. Attachments must have been extracted on receive — call mail_read first to verify availability.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"mailbox":     {"type": "string", "description": "Mailbox name (e.g. baron, merchant)", "default": "baron"},
+					"file":        {"type": "string", "description": "Email filename (e.g. 20260803_070000_12345.eml)"},
+					"attachment":  {"type": "string", "description": "Attachment filename as shown in mail_read output"},
+					"output_path": {"type": "string", "description": "Optional: save to this specific path instead of /tmp/"}
+				},
+				"required": ["file", "attachment"]
+			}`),
+		},
 	}
 }
 
@@ -281,6 +297,8 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleMailRead(call.Arguments)
 	case "mail_send":
 		return handleMailSend(call.Arguments)
+	case "mail_attachment_get":
+		return handleMailAttachmentGet(call.Arguments)
 	case "mail_process":
 		var mp struct {
 			Agent string `json:"agent"`
@@ -508,4 +526,79 @@ func handleMailSend(args json.RawMessage) ToolResult {
 	saveSentEmail(MailDir+"/"+defaultMailbox, params.To, params.Subject, params.Body)
 
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: "✅ Sent"}}}
+}
+
+// handleMailAttachmentGet retrieves an attachment from a received email.
+// Attachments must have been extracted on receive via ensureAttachments().
+// Returns JSON with path, size, and content_type of the saved file.
+func handleMailAttachmentGet(args json.RawMessage) ToolResult {
+	var params struct {
+		Mailbox    string `json:"mailbox"`
+		File       string `json:"file"`
+		Attachment string `json:"attachment"`
+		OutputPath string `json:"output_path"`
+	}
+	json.Unmarshal(args, &params)
+	if params.Mailbox == "" {
+		params.Mailbox = defaultMailbox
+	}
+	if params.File == "" || params.Attachment == "" {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: "Missing required fields: file and attachment",
+		}}}
+	}
+
+	// Security: reject path traversal in file and attachment names.
+	// ensureAttachments creates safe filenames, but we validate here as well.
+	if strings.ContainsAny(params.File, "/\\") || params.File == ".." {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: "Invalid file name",
+		}}}
+	}
+	if strings.ContainsAny(params.Attachment, "/\\") || params.Attachment == ".." {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: "Invalid attachment name",
+		}}}
+	}
+
+	srcPath := filepath.Join(MailDir, params.Mailbox,
+		"attachments", params.File, params.Attachment)
+
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: fmt.Sprintf(
+				"Attachment not found: %s (email: %s, attachment: %s). "+
+					"Call mail_read first to verify the attachment exists.",
+				srcPath, params.File, params.Attachment),
+		}}}
+	}
+
+	destPath := params.OutputPath
+	if destPath == "" {
+		destPath = filepath.Join(os.TempDir(),
+			fmt.Sprintf("mail_attachment_%d_%s",
+				time.Now().Unix(), params.Attachment))
+	}
+	os.MkdirAll(filepath.Dir(destPath), 0755)
+
+	if err := os.WriteFile(destPath, data, 0644); err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: fmt.Sprintf("Write error: %v", err),
+		}}}
+	}
+
+	mimeType := mime.TypeByExtension(filepath.Ext(params.Attachment))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	result := map[string]interface{}{
+		"path":         destPath,
+		"size":         len(data),
+		"content_type": mimeType,
+		"attachment":   params.Attachment,
+	}
+	out, _ := json.Marshal(result)
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(out)}}}
 }
