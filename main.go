@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"mime"
@@ -274,14 +275,13 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "mail_attachment_get",
-			Description: "Retrieve an attachment from a received email. Saves the file to output_path (or /tmp/) and returns JSON with path, size, and MIME type. Attachments must have been extracted on receive — call mail_read first to verify availability.",
+			Description: "Retrieve an attachment from a received email. Saves the file to a safe temporary path and returns JSON with path, size, and MIME type. Attachments must have been extracted on receive — call mail_read first to verify availability.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"mailbox":     {"type": "string", "description": "Mailbox name (e.g. baron, merchant)", "default": "baron"},
 					"file":        {"type": "string", "description": "Email filename (e.g. 20260803_070000_12345.eml)"},
-					"attachment":  {"type": "string", "description": "Attachment filename as shown in mail_read output"},
-					"output_path": {"type": "string", "description": "Optional: save to this specific path instead of /tmp/"}
+					"attachment":  {"type": "string", "description": "Attachment filename as shown in mail_read output"}
 				},
 				"required": ["file", "attachment"]
 			}`),
@@ -528,36 +528,66 @@ func handleMailSend(args json.RawMessage) ToolResult {
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: "✅ Sent"}}}
 }
 
+// isSafePathElement reports whether name is a single, safe filesystem path element.
+// It rejects separators, traversal sequences, and empty/null names.
+func isSafePathElement(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
+}
+
+// sanitizeFilename returns a safe filename derived from s: only letters,
+// digits, underscore, dash, and dot are preserved; everything else becomes '_'
+// and the result is trimmed to a reasonable length.
+func sanitizeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '_', r == '-', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := b.String()
+	if len(out) > 128 {
+		out = out[:128]
+	}
+	if out == "" || out == "." || out == ".." {
+		out = "attachment"
+	}
+	return out
+}
+
 // handleMailAttachmentGet retrieves an attachment from a received email.
 // Attachments must have been extracted on receive via ensureAttachments().
-// Returns JSON with path, size, and content_type of the saved file.
+// The file is copied to a safe temporary location and JSON metadata is returned.
 func handleMailAttachmentGet(args json.RawMessage) ToolResult {
 	var params struct {
 		Mailbox    string `json:"mailbox"`
 		File       string `json:"file"`
 		Attachment string `json:"attachment"`
-		OutputPath string `json:"output_path"`
 	}
-	json.Unmarshal(args, &params)
+	if err := json.Unmarshal(args, &params); err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: "Invalid arguments: " + err.Error(),
+		}}}
+	}
 	if params.Mailbox == "" {
 		params.Mailbox = defaultMailbox
 	}
-	if params.File == "" || params.Attachment == "" {
+	if !isValidMailbox(params.Mailbox) {
 		return ToolResult{IsError: true, Content: []ContentItem{{
-			Type: "text", Text: "Missing required fields: file and attachment",
+			Type: "text", Text: "Invalid mailbox name",
 		}}}
 	}
-
-	// Security: reject path traversal in file and attachment names.
-	// ensureAttachments creates safe filenames, but we validate here as well.
-	if strings.ContainsAny(params.File, "/\\") || params.File == ".." {
+	if !isSafePathElement(params.File) || !isSafePathElement(params.Attachment) {
 		return ToolResult{IsError: true, Content: []ContentItem{{
-			Type: "text", Text: "Invalid file name",
-		}}}
-	}
-	if strings.ContainsAny(params.Attachment, "/\\") || params.Attachment == ".." {
-		return ToolResult{IsError: true, Content: []ContentItem{{
-			Type: "text", Text: "Invalid attachment name",
+			Type: "text", Text: "Invalid file or attachment name",
 		}}}
 	}
 
@@ -574,17 +604,26 @@ func handleMailAttachmentGet(args json.RawMessage) ToolResult {
 		}}}
 	}
 
-	destPath := params.OutputPath
-	if destPath == "" {
-		destPath = filepath.Join(os.TempDir(),
-			fmt.Sprintf("mail_attachment_%d_%s",
-				time.Now().Unix(), params.Attachment))
-	}
-	os.MkdirAll(filepath.Dir(destPath), 0755)
+	safeName := sanitizeFilename(params.Attachment)
+	destPath := filepath.Join(os.TempDir(),
+		fmt.Sprintf("mail_attachment_%d_%s",
+			time.Now().UnixNano(), safeName))
 
-	if err := os.WriteFile(destPath, data, 0644); err != nil {
+	// Write with restrictive permissions. A unique nanosecond timestamp makes
+	// collisions practically impossible, but O_EXCL prevents overwriting
+	// should one somehow occur.
+	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{
 			Type: "text", Text: fmt.Sprintf("Write error: %v", err),
+		}}}
+	}
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil || closeErr != nil {
+		os.Remove(destPath)
+		return ToolResult{IsError: true, Content: []ContentItem{{
+			Type: "text", Text: fmt.Sprintf("Write error: %v", errors.Join(writeErr, closeErr)),
 		}}}
 	}
 
@@ -601,4 +640,20 @@ func handleMailAttachmentGet(args json.RawMessage) ToolResult {
 	}
 	out, _ := json.Marshal(result)
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(out)}}}
+}
+
+// isValidMailbox reports whether name is a simple mailbox identifier.
+func isValidMailbox(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
 }

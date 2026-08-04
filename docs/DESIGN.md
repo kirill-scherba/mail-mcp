@@ -39,7 +39,16 @@ process.go extracts Message-ID from incoming email
 - Raw email (RFC 822) stored as .eml files
 - One file per email, named `YYYYMMDD_HHMMSS_PID.eml`
 - Read status: hidden `.<file>.read` marker file
+- Attachments extracted on receive to `/srv/mail/{mailbox}/attachments/{eml}/{attachment}`
 - No database needed for MVP — filesystem is the store
+
+## Attachment retrieval
+
+`mail_attachment_get` reads already-extracted attachments from the filesystem store above,
+copies them to a safe temporary path (e.g. under `/tmp`), and returns JSON metadata
+(`path`, `size`, `content_type`). Path components (`mailbox`, `file`, `attachment`) are
+validated to prevent directory traversal. Attachments are written with mode `0600` and
+exclusive creation (`O_EXCL`) to avoid overwriting existing files.
 
 ## Mailbox routing
 
