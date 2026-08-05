@@ -197,36 +197,6 @@ func getTools() []Tool {
 			}`),
 		},
 		{
-			Name:        "waiting_list",
-			Description: "List pending (waiting) emails — those waiting for replies from others.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"agent": {"type": "string", "default": "baron"}
-				}
-			}`),
-		},
-		{
-			Name:        "waiting_create",
-			Description: "Create a waiting item for an email that needs info from someone else. Saves the pending request and sends questions to specified recipients.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"file": {"type": "string", "description": "Original email filename"},
-					"from": {"type": "string", "description": "Original sender email"},
-					"subject": {"type": "string", "description": "Original email subject"},
-					"needs": {"type": "array", "description": "List of people to ask", "items": {
-						"type": "object",
-						"properties": {
-							"who": {"type": "string", "description": "Email of person to ask"},
-							"question": {"type": "string", "description": "Question to ask them"}
-						}
-					}},
-					"agent": {"type": "string", "default": "baron"}
-				}
-			}`),
-		},
-		{
 			Name:        "gmail_auth",
 			Description: "Start Gmail OAuth2 authorization. Returns a URL to visit for granting access.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
@@ -311,10 +281,6 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleContactGet(call.Arguments)
 	case "contact_save":
 		return handleContactSave(call.Arguments)
-	case "waiting_list":
-		return handleWaitingList(call.Arguments)
-	case "waiting_create":
-		return handleWaitingCreate(call.Arguments)
 	case "gmail_auth":
 		return handleGmailAuth()
 	case "gmail_list":
