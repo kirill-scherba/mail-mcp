@@ -225,15 +225,15 @@ func processMail(agent string) (string, error) {
 			}
 		}
 
-		// Skip sending if agent already replied via mail_send (returned "OK")
+		// Skip sending if agent already replied via mail_send (returned "OK").
+		// The agent uses mail_send for special cases (e.g. attachments) and
+		// then returns "OK" so process.go does not send a duplicate.
 		if strings.ToLower(strings.TrimSpace(reply)) != "ok" {
 			err = sendSMTP("", "", senderEmail, "Re: "+subject, reply, originalMessageID)
 			if err != nil {
 				results = append(results, fmt.Sprintf("❌ %s: SMTP error: %v", e.Name(), err))
 				continue
 			}
-
-			// Save sent email copy
 			saveSentEmail(mboxDir, senderEmail, "Re: "+subject, reply)
 		}
 
