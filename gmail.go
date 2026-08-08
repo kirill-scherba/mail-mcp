@@ -25,10 +25,27 @@ import (
 )
 
 const (
-	gmailTokenFile    = "/srv/mail/baron/gmail_token.json"
 	gmailCallbackPort = ":9999"
 	gmailAPIBase      = "https://gmail.googleapis.com/gmail/v1/users/me"
 )
+
+// gmailTokenPath returns the token file path for an account.
+// Empty account falls back to the legacy single-token path.
+func gmailTokenPath(account string) string {
+	if account == "" {
+		return "/srv/mail/baron/gmail_token.json"
+	}
+	return "/srv/mail/gmail/" + account + "/token.json"
+}
+
+// gmailDefaultAccount returns the default account for an operation
+// (read or send), from env or empty.
+func gmailDefaultAccount(use string) string {
+	if use == "send" {
+		return os.Getenv("GMAIL_DEFAULT_SEND_ACCOUNT")
+	}
+	return os.Getenv("GMAIL_DEFAULT_READ_ACCOUNT")
+}
 
 var gmailOAuthConfig *oauth2.Config
 
@@ -48,9 +65,9 @@ func initGmailOAuth() {
 	}
 }
 
-// gmailGetToken returns stored token or nil.
-func gmailGetToken() (*oauth2.Token, error) {
-	data, err := os.ReadFile(gmailTokenFile)
+// gmailGetToken returns stored token for an account or nil.
+func gmailGetToken(account string) (*oauth2.Token, error) {
+	data, err := os.ReadFile(gmailTokenPath(account))
 	if err != nil {
 		return nil, err
 	}
@@ -61,19 +78,23 @@ func gmailGetToken() (*oauth2.Token, error) {
 	return &tok, nil
 }
 
-// gmailSaveToken stores the token to file.
-func gmailSaveToken(tok *oauth2.Token) error {
+// gmailSaveToken stores the token for an account to file.
+func gmailSaveToken(account string, tok *oauth2.Token) error {
+	path := gmailTokenPath(account)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(tok, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(gmailTokenFile, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
-// gmailHTTPClient returns an authenticated HTTP client using stored token.
-// If token is expired, it refreshes automatically.
-func gmailHTTPClient() (*http.Client, error) {
-	tok, err := gmailGetToken()
+// gmailHTTPClient returns an authenticated HTTP client using stored token
+// for the account. If token is expired, it refreshes automatically.
+func gmailHTTPClient(account string) (*http.Client, error) {
+	tok, err := gmailGetToken(account)
 	if err != nil {
 		return nil, fmt.Errorf("no token: %w — run gmail_auth first", err)
 	}
@@ -105,12 +126,17 @@ func startGmailCallbackServer() {
 	}()
 }
 
-// gmailCallbackHandler receives the OAuth code from Google and exchanges it for a token.
+// gmailCallbackHandler receives the OAuth code from Google and exchanges it
+// for a token. The OAuth state carries the account (email) to save under.
 func gmailCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", http.StatusBadRequest)
 		return
+	}
+	account := r.URL.Query().Get("state")
+	if account == "" || account == "state" {
+		account = gmailDefaultAccount("read")
 	}
 
 	tok, err := gmailOAuthConfig.Exchange(context.Background(), code)
@@ -120,28 +146,32 @@ func gmailCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := gmailSaveToken(tok); err != nil {
+	if err := gmailSaveToken(account, tok); err != nil {
 		log.Printf("save token error: %v", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
 
 	w.Write([]byte(`<!DOCTYPE html><html><body><h1>✅ Gmail авторизован!</h1><p>Можно закрыть окно.</p></body></html>`))
-	log.Printf("Gmail token saved successfully (expires: %v)", tok.Expiry)
+	log.Printf("Gmail token saved for %s (expires: %v)", account, tok.Expiry)
 }
 
-// gmailAuthURL generates the OAuth consent URL for the user.
-func gmailAuthURL() string {
+// gmailAuthURL generates the OAuth consent URL for the user. The state
+// carries the account so the callback can save the token under its key.
+func gmailAuthURL(account string) string {
 	if gmailOAuthConfig == nil {
 		return "GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REDIRECT_URI not set in env"
 	}
-	authURL := gmailOAuthConfig.AuthCodeURL("state", oauth2.AccessTypeOffline)
-	return fmt.Sprintf("Перейдите по ссылке, разрешите доступ:\n\n%s\n\nПосле этого вы будете перенаправлены на %s", authURL, gmailOAuthConfig.RedirectURL)
+	if account == "" {
+		account = gmailDefaultAccount("read")
+	}
+	authURL := gmailOAuthConfig.AuthCodeURL(account, oauth2.AccessTypeOffline)
+	return fmt.Sprintf("Перейдите по ссылке, разрешите доступ для %s:\n\n%s\n\nПосле этого вы будете перенаправлены на %s", account, authURL, gmailOAuthConfig.RedirectURL)
 }
 
 // gmailDoAPI performs an authenticated GET request to the Gmail API.
-func gmailDoAPI(endpoint string) ([]byte, error) {
-	client, err := gmailHTTPClient()
+func gmailDoAPI(account, endpoint string) ([]byte, error) {
+	client, err := gmailHTTPClient(account)
 	if err != nil {
 		return nil, err
 	}
@@ -169,23 +199,162 @@ func gmailDoAPI(endpoint string) ([]byte, error) {
 }
 
 // handleGmailAuth is the MCP tool handler for gmail_auth
-func handleGmailAuth() ToolResult {
-	url := gmailAuthURL()
+func handleGmailAuth(account string) ToolResult {
+	url := gmailAuthURL(account)
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: url}}}
 }
 
+// gmailMeta is a compact message summary (headers only, no body).
+type gmailMeta struct {
+	ID      string
+	From    string
+	Subject string
+	Date    string
+	Snippet string
+}
+
+// gmailFetchMeta fetches message metadata (From/Subject/Date + snippet)
+// without downloading the full body. Falls back to the snippet on errors
+// so a single broken message never breaks a whole list/search.
+func gmailFetchMeta(account, messageID string) (gmailMeta, error) {
+	client, err := gmailHTTPClient(account)
+	if err != nil {
+		return gmailMeta{}, err
+	}
+	u := gmailAPIBase + "/messages/" + url.PathEscape(messageID) +
+		"?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date"
+	resp, err := client.Get(u)
+	if err != nil {
+		return gmailMeta{}, fmt.Errorf("api request: %w", err)
+	}
+	defer resp.Body.Close()
+	buf, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return gmailMeta{}, fmt.Errorf("api error: %s", resp.Status)
+	}
+	if len(buf) == 0 {
+		return gmailMeta{}, fmt.Errorf("empty response")
+	}
+
+	var msg struct {
+		ID      string `json:"id"`
+		Snippet string `json:"snippet"`
+		Payload struct {
+			Headers []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"headers"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(buf, &msg); err != nil {
+		return gmailMeta{}, fmt.Errorf("parse: %w", err)
+	}
+	headers := map[string]string{}
+	for _, h := range msg.Payload.Headers {
+		headers[strings.ToLower(h.Name)] = h.Value
+	}
+	return gmailMeta{
+		ID:      msg.ID,
+		From:    headers["from"],
+		Subject: headers["subject"],
+		Date:    headers["date"],
+		Snippet: strings.TrimSpace(msg.Snippet),
+	}, nil
+}
+
+// gmailListMeta returns message IDs from /messages (optionally with a query).
+func gmailListMeta(account, query string, limit int) ([]gmailMeta, int, error) {
+	client, err := gmailHTTPClient(account)
+	if err != nil {
+		return nil, 0, err
+	}
+	u := gmailAPIBase + "/messages?maxResults=" + fmt.Sprintf("%d", limit)
+	if query != "" {
+		u += "&q=" + url.QueryEscape(query)
+	}
+	resp, err := client.Get(u)
+	if err != nil {
+		return nil, 0, fmt.Errorf("api request: %w", err)
+	}
+	defer resp.Body.Close()
+	buf, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("api error: %s", resp.Status)
+	}
+	var res struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+		ResultSizeEstimate int `json:"resultSizeEstimate"`
+	}
+	if err := json.Unmarshal(buf, &res); err != nil {
+		return nil, 0, fmt.Errorf("parse: %w", err)
+	}
+	metas := make([]gmailMeta, 0, len(res.Messages))
+	for _, m := range res.Messages {
+		meta, err := gmailFetchMeta(account, m.ID)
+		if err != nil {
+			// Keep the ID so the message is still listed, even if headers fail.
+			metas = append(metas, gmailMeta{ID: m.ID, Subject: "(headers unavailable)"})
+			continue
+		}
+		metas = append(metas, meta)
+	}
+	return metas, res.ResultSizeEstimate, nil
+}
+
 // handleGmailList is the MCP tool handler for gmail_list
-func handleGmailList() ToolResult {
-	data, err := gmailDoAPI("/messages?maxResults=10")
+func handleGmailList(limit int, account string) ToolResult {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if account == "" {
+		account = gmailDefaultAccount("read")
+	}
+	metas, total, err := gmailListMeta(account, "", limit)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: string(data)}}}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Ящик: %s | Писем в почте (оценка): %d, показано %d:\n\n", account, total, len(metas)))
+	for i, m := range metas {
+		sb.WriteString(fmt.Sprintf("[%d] %s\n    From: %s\n    Date: %s\n    ID: %s\n\n", i+1, m.Subject, m.From, m.Date, m.ID))
+	}
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
+}
+
+// handleGmailSearch searches Gmail messages by query and returns metadata.
+func handleGmailSearch(query string, limit int, account string) ToolResult {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if account == "" {
+		account = gmailDefaultAccount("read")
+	}
+	metas, total, err := gmailListMeta(account, query, limit)
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Ящик: %s | Найдено писем (оценка): %d, показано %d:\n\n", account, total, len(metas)))
+	for i, m := range metas {
+		sb.WriteString(fmt.Sprintf("[%d] %s\n    From: %s\n    Date: %s\n    ID: %s\n    %s\n\n",
+			i+1, m.Subject, m.From, m.Date, m.ID, truncateStr(m.Snippet, 200)))
+	}
+	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
+}
+
+// truncateStr cuts a string to n runes.
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // handleGmailRead reads a full Gmail message by ID
-func handleGmailRead(messageID string) ToolResult {
-	client, err := gmailHTTPClient()
+func handleGmailRead(messageID, account string) ToolResult {
+	client, err := gmailHTTPClient(account)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
@@ -200,6 +369,9 @@ func handleGmailRead(messageID string) ToolResult {
 	buf, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %s", resp.Status)}}}
+	}
+	if len(buf) == 0 {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "empty response from Gmail API"}}}
 	}
 
 	// Parse and format
@@ -268,53 +440,12 @@ func handleGmailRead(messageID string) ToolResult {
 	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
 }
 
-// handleGmailSearch searches Gmail messages by query
-func handleGmailSearch(query string, limit int) ToolResult {
-	client, err := gmailHTTPClient()
-	if err != nil {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
-	}
-
-	if limit <= 0 || limit > 50 {
-		limit = 10
-	}
-	q := url.QueryEscape(query)
-	u := gmailAPIBase + "/messages?q=" + q + "&maxResults=" + fmt.Sprintf("%d", limit)
-	resp, err := client.Get(u)
-	if err != nil {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %v", err)}}}
-	}
-	defer resp.Body.Close()
-
-	buf, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("api error: %s", resp.Status)}}}
-	}
-
-	var res struct {
-		Messages []struct {
-			ID string `json:"id"`
-		} `json:"messages"`
-		ResultSizeEstimate int `json:"resultSizeEstimate"`
-	}
-	if err := json.Unmarshal(buf, &res); err != nil {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("parse error: %v", err)}}}
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Найдено писем: %d (показано %d)\n\n", res.ResultSizeEstimate, len(res.Messages)))
-	for i, m := range res.Messages {
-		// Read each message briefly
-		content := handleGmailRead(m.ID)
-		sb.WriteString(fmt.Sprintf("[%d] ID: %s\n%s\n\n", i+1, m.ID, content.Content[0].Text))
-	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: sb.String()}}}
-}
-
 // stripHTML removes HTML tags, style/script blocks, and decodes common entities
 func stripHTML(s string) string {
-	// Remove style and script blocks entirely
-	blockRe := regexp.MustCompile(`(?is)<(style|script)[^>]*>.*?</\1>`)
+	// Remove style and script blocks entirely.
+	// NOTE: RE2 (Go regexp) has no backreferences, so the tag name is
+	// repeated instead of using \1.
+	blockRe := regexp.MustCompile(`(?is)<(style|script)\b[^>]*>.*?</(style|script)>`)
 	s = blockRe.ReplaceAllString(s, " ")
 	// Remove comments
 	s = regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(s, " ")
@@ -345,8 +476,11 @@ func decodeBase64Str(s string) string {
 }
 
 // handleGmailSend sends an email via Gmail API, optionally with attachment.
-func handleGmailSend(to, subject, body, attachmentPath string) ToolResult {
-	client, err := gmailHTTPClient()
+func handleGmailSend(to, subject, body, attachmentPath, account string) ToolResult {
+	if account == "" {
+		account = gmailDefaultAccount("send")
+	}
+	client, err := gmailHTTPClient(account)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
