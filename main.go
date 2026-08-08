@@ -199,12 +199,23 @@ func getTools() []Tool {
 		{
 			Name:        "gmail_auth",
 			Description: "Start Gmail OAuth2 authorization. Returns a URL to visit for granting access.",
-			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"account": {"type": "string", "description": "Gmail account (email) to authorize (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				}
+			}`),
 		},
 		{
 			Name:        "gmail_list",
-			Description: "List recent messages from Gmail (requires gmail_auth first).",
-			InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+			Description: "List recent messages from Gmail (requires gmail_auth first). Returns subjects, senders and dates.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"limit": {"type": "integer", "description": "Max results (default 10, max 50)"},
+					"account": {"type": "string", "description": "Gmail account (email) to read (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				}
+			}`),
 		},
 		{
 			Name:        "gmail_send",
@@ -215,7 +226,8 @@ func getTools() []Tool {
 					"to":      {"type": "string", "description": "Recipient email"},
 					"subject": {"type": "string", "description": "Subject"},
 					"body":    {"type": "string", "description": "Email body"},
-					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"}
+					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"},
+					"account": {"type": "string", "description": "Gmail account (email) to send from (default: GMAIL_DEFAULT_SEND_ACCOUNT)"}
 				},
 				"required": ["to", "subject", "body"]
 			}`),
@@ -226,7 +238,8 @@ func getTools() []Tool {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"id": {"type": "string", "description": "Gmail message ID"}
+					"id": {"type": "string", "description": "Gmail message ID"},
+					"account": {"type": "string", "description": "Gmail account (email) to read from (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
 				},
 				"required": ["id"]
 			}`),
@@ -238,7 +251,8 @@ func getTools() []Tool {
 				"type": "object",
 				"properties": {
 					"query": {"type": "string", "description": "Search query (e.g. 'from:bank subject:invoice')"},
-					"limit": {"type": "integer", "description": "Max results (default 10)"}
+					"limit": {"type": "integer", "description": "Max results (default 10)"},
+					"account": {"type": "string", "description": "Gmail account (email) to search (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
 				},
 				"required": ["query"]
 			}`),
@@ -282,31 +296,43 @@ func handleToolCall(call ToolCall) ToolResult {
 	case "contact_save":
 		return handleContactSave(call.Arguments)
 	case "gmail_auth":
-		return handleGmailAuth()
+		var p struct {
+			Account string `json:"account"`
+		}
+		json.Unmarshal(call.Arguments, &p)
+		return handleGmailAuth(p.Account)
 	case "gmail_list":
-		return handleGmailList()
+		var p struct {
+			Limit   int    `json:"limit"`
+			Account string `json:"account"`
+		}
+		json.Unmarshal(call.Arguments, &p)
+		return handleGmailList(p.Limit, p.Account)
 	case "gmail_send":
 		var p struct {
 			To             string `json:"to"`
 			Subject        string `json:"subject"`
 			Body           string `json:"body"`
 			AttachmentPath string `json:"attachment_path"`
+			Account        string `json:"account"`
 		}
 		json.Unmarshal(call.Arguments, &p)
-		return handleGmailSend(p.To, p.Subject, p.Body, p.AttachmentPath)
+		return handleGmailSend(p.To, p.Subject, p.Body, p.AttachmentPath, p.Account)
 	case "gmail_read":
 		var p struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Account string `json:"account"`
 		}
 		json.Unmarshal(call.Arguments, &p)
-		return handleGmailRead(p.ID)
+		return handleGmailRead(p.ID, p.Account)
 	case "gmail_search":
 		var p struct {
-			Query string `json:"query"`
-			Limit int    `json:"limit"`
+			Query   string `json:"query"`
+			Limit   int    `json:"limit"`
+			Account string `json:"account"`
 		}
 		json.Unmarshal(call.Arguments, &p)
-		return handleGmailSearch(p.Query, p.Limit)
+		return handleGmailSearch(p.Query, p.Limit, p.Account)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
