@@ -152,6 +152,10 @@ func gmailCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if tok.RefreshToken == "" {
+		log.Printf("WARNING: no refresh_token issued for %s — token will expire and auth will break again", account)
+	}
+
 	w.Write([]byte(`<!DOCTYPE html><html><body><h1>✅ Gmail авторизован!</h1><p>Можно закрыть окно.</p></body></html>`))
 	log.Printf("Gmail token saved for %s (expires: %v)", account, tok.Expiry)
 }
@@ -165,7 +169,14 @@ func gmailAuthURL(account string) string {
 	if account == "" {
 		account = gmailDefaultAccount("read")
 	}
-	authURL := gmailOAuthConfig.AuthCodeURL(account, oauth2.AccessTypeOffline)
+	// prompt=consent forces Google to show the consent screen again and
+	// issue a NEW refresh token on every authorization. Without it, a
+	// repeated auth for the same client_id only returns a short-lived
+	// access token, which silently breaks the mail reader after ~1 hour.
+	authURL := gmailOAuthConfig.AuthCodeURL(account,
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "consent"),
+	)
 	return fmt.Sprintf("Перейдите по ссылке, разрешите доступ для %s:\n\n%s\n\nПосле этого вы будете перенаправлены на %s", account, authURL, gmailOAuthConfig.RedirectURL)
 }
 
