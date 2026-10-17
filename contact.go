@@ -33,7 +33,9 @@ func contactKey(email string) string {
 }
 
 func handleContactGet(args json.RawMessage) ToolResult {
-	var p struct{ Email string `json:"email"` }
+	var p struct {
+		Email string `json:"email"`
+	}
 	json.Unmarshal(args, &p)
 	if p.Email == "" {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Missing email"}}}
@@ -67,10 +69,18 @@ func handleContactSave(args json.RawMessage) ToolResult {
 	}
 
 	c.Email = p.Email
-	if p.Name != "" { c.Name = p.Name }
-	if p.Who != "" && !c.Locked { c.Who = p.Who }
-	if p.Summary != "" { c.Summary = p.Summary }
-	if c.FirstSeen == "" { c.FirstSeen = time.Now().UTC().Format("2006-01-02") }
+	if p.Name != "" {
+		c.Name = p.Name
+	}
+	if p.Who != "" && !c.Locked {
+		c.Who = p.Who
+	}
+	if p.Summary != "" {
+		c.Summary = p.Summary
+	}
+	if c.FirstSeen == "" {
+		c.FirstSeen = time.Now().UTC().Format("2006-01-02")
+	}
 	c.LastSeen = time.Now().UTC().Format("2006-01-02")
 	c.TotalMail++
 
@@ -81,7 +91,9 @@ func handleContactSave(args json.RawMessage) ToolResult {
 
 func ensureContact(from string) *Contact {
 	email := extractEmail(from)
-	if email == "" { return nil }
+	if email == "" {
+		return nil
+	}
 	email = strings.ToLower(email)
 
 	os.MkdirAll(contactsDir, 0755)

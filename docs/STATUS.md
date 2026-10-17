@@ -19,6 +19,7 @@
 - [x] Fix email threading: set References/In-Reply-To on replies (#1)
 - [x] Tool: mail_attachment_get (MCP tool for attachment retrieval) (#3)
 - [x] Write conversation summaries via contact.summary after every non-trivial email (#2)
+- [x] Google Calendar events CRUD + OAuth scope (#7)
 
 ## In progress
 

@@ -1,7 +1,8 @@
 // Copyright 2026 Kirill Scherba. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// gmail.go — Gmail OAuth2 integration: auth, list, read, send via Gmail API.
+// gmail.go — Gmail OAuth2 integration and shared Google OAuth helpers.
+// Calendar reuses the same OAuth config, token store, and refresh logic.
 package main
 
 import (
@@ -29,25 +30,25 @@ const (
 	gmailAPIBase      = "https://gmail.googleapis.com/gmail/v1/users/me"
 )
 
-// gmailTokenPath returns the token file path for an account.
+// googleTokenPath returns the token file path for an account.
 // Empty account falls back to the legacy single-token path.
-func gmailTokenPath(account string) string {
+func googleTokenPath(account string) string {
 	if account == "" {
 		return "/srv/mail/baron/gmail_token.json"
 	}
 	return "/srv/mail/gmail/" + account + "/token.json"
 }
 
-// gmailDefaultAccount returns the default account for an operation
+// googleDefaultAccount returns the default account for an operation
 // (read or send), from env or empty.
-func gmailDefaultAccount(use string) string {
+func googleDefaultAccount(use string) string {
 	if use == "send" {
 		return os.Getenv("GMAIL_DEFAULT_SEND_ACCOUNT")
 	}
 	return os.Getenv("GMAIL_DEFAULT_READ_ACCOUNT")
 }
 
-var gmailOAuthConfig *oauth2.Config
+var googleOAuthConfig *oauth2.Config
 
 func initGmailOAuth() {
 	clientID := os.Getenv("GMAIL_CLIENT_ID")
@@ -56,18 +57,22 @@ func initGmailOAuth() {
 	if clientID == "" || clientSecret == "" || redirectURI == "" {
 		return // Gmail not configured, tools will return error
 	}
-	gmailOAuthConfig = &oauth2.Config{
+	googleOAuthConfig = &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURI,
-		Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"},
-		Endpoint:     google.Endpoint,
+		Scopes: []string{
+			"https://www.googleapis.com/auth/gmail.readonly",
+			"https://www.googleapis.com/auth/gmail.send",
+			"https://www.googleapis.com/auth/calendar",
+		},
+		Endpoint: google.Endpoint,
 	}
 }
 
-// gmailGetToken returns stored token for an account or nil.
-func gmailGetToken(account string) (*oauth2.Token, error) {
-	data, err := os.ReadFile(gmailTokenPath(account))
+// googleGetToken returns stored token for an account or nil.
+func googleGetToken(account string) (*oauth2.Token, error) {
+	data, err := os.ReadFile(googleTokenPath(account))
 	if err != nil {
 		return nil, err
 	}
@@ -78,9 +83,9 @@ func gmailGetToken(account string) (*oauth2.Token, error) {
 	return &tok, nil
 }
 
-// gmailSaveToken stores the token for an account to file.
-func gmailSaveToken(account string, tok *oauth2.Token) error {
-	path := gmailTokenPath(account)
+// googleSaveToken stores the token for an account to file.
+func googleSaveToken(account string, tok *oauth2.Token) error {
+	path := googleTokenPath(account)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -91,14 +96,14 @@ func gmailSaveToken(account string, tok *oauth2.Token) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// gmailHTTPClient returns an authenticated HTTP client using stored token
+// googleHTTPClient returns an authenticated HTTP client using stored token
 // for the account. If token is expired, it refreshes automatically.
-func gmailHTTPClient(account string) (*http.Client, error) {
-	tok, err := gmailGetToken(account)
+func googleHTTPClient(account string) (*http.Client, error) {
+	tok, err := googleGetToken(account)
 	if err != nil {
 		return nil, fmt.Errorf("no token: %w — run gmail_auth first", err)
 	}
-	client := gmailOAuthConfig.Client(context.Background(), tok)
+	client := googleOAuthConfig.Client(context.Background(), tok)
 	return client, nil
 }
 
@@ -136,17 +141,17 @@ func gmailCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	account := r.URL.Query().Get("state")
 	if account == "" || account == "state" {
-		account = gmailDefaultAccount("read")
+		account = googleDefaultAccount("read")
 	}
 
-	tok, err := gmailOAuthConfig.Exchange(context.Background(), code)
+	tok, err := googleOAuthConfig.Exchange(context.Background(), code)
 	if err != nil {
 		log.Printf("token exchange error: %v", err)
 		http.Error(w, "token exchange failed", http.StatusInternalServerError)
 		return
 	}
 
-	if err := gmailSaveToken(account, tok); err != nil {
+	if err := googleSaveToken(account, tok); err != nil {
 		log.Printf("save token error: %v", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
@@ -163,26 +168,26 @@ func gmailCallbackHandler(w http.ResponseWriter, r *http.Request) {
 // gmailAuthURL generates the OAuth consent URL for the user. The state
 // carries the account so the callback can save the token under its key.
 func gmailAuthURL(account string) string {
-	if gmailOAuthConfig == nil {
+	if googleOAuthConfig == nil {
 		return "GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REDIRECT_URI not set in env"
 	}
 	if account == "" {
-		account = gmailDefaultAccount("read")
+		account = googleDefaultAccount("read")
 	}
 	// prompt=consent forces Google to show the consent screen again and
 	// issue a NEW refresh token on every authorization. Without it, a
 	// repeated auth for the same client_id only returns a short-lived
 	// access token, which silently breaks the mail reader after ~1 hour.
-	authURL := gmailOAuthConfig.AuthCodeURL(account,
+	authURL := googleOAuthConfig.AuthCodeURL(account,
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),
 	)
-	return fmt.Sprintf("Перейдите по ссылке, разрешите доступ для %s:\n\n%s\n\nПосле этого вы будете перенаправлены на %s", account, authURL, gmailOAuthConfig.RedirectURL)
+	return fmt.Sprintf("Перейдите по ссылке, разрешите доступ для %s:\n\n%s\n\nПосле этого вы будете перенаправлены на %s", account, authURL, googleOAuthConfig.RedirectURL)
 }
 
 // gmailDoAPI performs an authenticated GET request to the Gmail API.
 func gmailDoAPI(account, endpoint string) ([]byte, error) {
-	client, err := gmailHTTPClient(account)
+	client, err := googleHTTPClient(account)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +233,7 @@ type gmailMeta struct {
 // without downloading the full body. Falls back to the snippet on errors
 // so a single broken message never breaks a whole list/search.
 func gmailFetchMeta(account, messageID string) (gmailMeta, error) {
-	client, err := gmailHTTPClient(account)
+	client, err := googleHTTPClient(account)
 	if err != nil {
 		return gmailMeta{}, err
 	}
@@ -275,7 +280,7 @@ func gmailFetchMeta(account, messageID string) (gmailMeta, error) {
 
 // gmailListMeta returns message IDs from /messages (optionally with a query).
 func gmailListMeta(account, query string, limit int) ([]gmailMeta, int, error) {
-	client, err := gmailHTTPClient(account)
+	client, err := googleHTTPClient(account)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -320,7 +325,7 @@ func handleGmailList(limit int, account string) ToolResult {
 		limit = 10
 	}
 	if account == "" {
-		account = gmailDefaultAccount("read")
+		account = googleDefaultAccount("read")
 	}
 	metas, total, err := gmailListMeta(account, "", limit)
 	if err != nil {
@@ -340,7 +345,7 @@ func handleGmailSearch(query string, limit int, account string) ToolResult {
 		limit = 10
 	}
 	if account == "" {
-		account = gmailDefaultAccount("read")
+		account = googleDefaultAccount("read")
 	}
 	metas, total, err := gmailListMeta(account, query, limit)
 	if err != nil {
@@ -365,7 +370,7 @@ func truncateStr(s string, n int) string {
 
 // handleGmailRead reads a full Gmail message by ID
 func handleGmailRead(messageID, account string) ToolResult {
-	client, err := gmailHTTPClient(account)
+	client, err := googleHTTPClient(account)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
@@ -489,9 +494,9 @@ func decodeBase64Str(s string) string {
 // handleGmailSend sends an email via Gmail API, optionally with attachment.
 func handleGmailSend(to, subject, body, attachmentPath, account string) ToolResult {
 	if account == "" {
-		account = gmailDefaultAccount("send")
+		account = googleDefaultAccount("send")
 	}
-	client, err := gmailHTTPClient(account)
+	client, err := googleHTTPClient(account)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
