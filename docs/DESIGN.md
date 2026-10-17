@@ -7,11 +7,13 @@
 │ OpenCode     │◄──►│  mcp-gateway     │◄──►│  mail-mcp    │
 │ (MCP client) │    │  localhost:7711  │    │  (Go MCP)    │
 └─────────────┘    └──────────────────┘    └──────┬───────┘
-                                                  │
-                                  ┌───────────────┴───────────────┐
-                                  │  parse.go (Perl Email::MIME)   │
-                                  │  send.go (Perl Brevo SMTP)     │
-                                  └───────────────────────────────┘
+                                                   │
+                                   ┌───────────────┴───────────────┐
+                                   │  parse.go (Perl Email::MIME)   │
+                                   │  send.go (Perl Brevo SMTP)     │
+                                   │  gmail.go + calendar.go        │
+                                   │  (Google OAuth / raw HTTP)     │
+                                   └───────────────────────────────┘
 ```
 
 ## Data flow
@@ -66,10 +68,25 @@ Unknown mailboxes fall back to /srv/mail/inbox/.
 - No PGP yet (planned)
 - No spam filtering yet (planned: LLM-based classification)
 
+## Calendar
+
+Google Calendar is integrated in `calendar.go` using raw HTTP against
+`https://www.googleapis.com/calendar/v3`, just as Gmail uses raw HTTP against
+the Gmail API. Both share the same OAuth2 config, token store, and refresh
+logic from `gmail.go`. Calendar support adds one scope
+(`https://www.googleapis.com/auth/calendar`) to the existing consent flow, so
+the first deployment requires re-authorization through `gmail_auth`.
+
+Calendar events are returned as compact human-readable text. Recurring events
+are returned as masters with their raw `recurrence` rule; occurrence expansion
+is not performed in this step.
+
 ## Dependencies
 
 - Cloudflare Email Routing (inbound MX)
 - Cloudflare Worker (email → HTTP bridge)
 - Let's Encrypt (SSL for a-mail.matrica.work)
 - Brevo API (outbound SMTP)
+- Google Gmail API (read/send)
+- Google Calendar API (events CRUD)
 - Perl Email::MIME (email parsing)

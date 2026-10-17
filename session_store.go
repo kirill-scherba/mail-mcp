@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	defaultSessionMax   = 30
-	sessionStoreFile    = "sessions.json"
+	defaultSessionMax = 30
+	sessionStoreFile  = "sessions.json"
 )
 
 // SessionEntry holds one sender's session metadata.

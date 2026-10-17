@@ -23,6 +23,15 @@ Outbound mail goes through Brevo SMTP API.
 | `mail_read` | Read a full email by filename, mark as read |
 | `mail_send` | Send an email via Brevo SMTP |
 | `mail_attachment_get` | Retrieve an attachment from a received email |
+| `calendar_list` | List Google Calendar events for a date range |
+| `calendar_get` | Get a single Google Calendar event by ID |
+| `calendar_create` | Create a Google Calendar event |
+| `calendar_update` | Update a Google Calendar event (partial) |
+| `calendar_delete` | Delete a Google Calendar event by ID |
+
+## Google Calendar
+
+Calendar tools reuse the same Google account and token storage as the Gmail tools. After the first deployment that includes Calendar support, run `gmail_auth` again so the stored token includes the `calendar` scope; otherwise Calendar calls return `403` and ask for re-authorization.
 
 ## Quick Start
 
