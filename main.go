@@ -22,8 +22,8 @@ type Tool struct {
 }
 
 type ToolCall struct {
-	Name       string          `json:"name"`
-	Arguments  json.RawMessage `json:"arguments"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type ToolResult struct {
@@ -258,6 +258,85 @@ func getTools() []Tool {
 			}`),
 		},
 		{
+			Name:        "calendar_list",
+			Description: "List Google Calendar events for a date range. Attendees are not notified.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"time_min": {"type": "string", "description": "Range start in RFC 3339 with offset (default: now)"},
+					"time_max": {"type": "string", "description": "Range end in RFC 3339 with offset (default: now + 7 days)"},
+					"max_results": {"type": "integer", "description": "Max events (default 10, max 250)", "default": 10},
+					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				}
+			}`),
+		},
+		{
+			Name:        "calendar_get",
+			Description: "Get a single Google Calendar event by ID.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"event_id": {"type": "string", "description": "Calendar event ID"},
+					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				},
+				"required": ["event_id"]
+			}`),
+		},
+		{
+			Name:        "calendar_create",
+			Description: "Create a Google Calendar event. Attendees are not notified.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"summary": {"type": "string", "description": "Event title"},
+					"start": {"type": "string", "description": "Start time RFC 3339 with offset"},
+					"end": {"type": "string", "description": "End time RFC 3339 with offset"},
+					"description": {"type": "string", "description": "Event description"},
+					"location": {"type": "string", "description": "Event location"},
+					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses of attendees"},
+					"time_zone": {"type": "string", "description": "Time zone for the event (default: Europe/Moscow)", "default": "Europe/Moscow"},
+					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				},
+				"required": ["summary", "start", "end"]
+			}`),
+		},
+		{
+			Name:        "calendar_update",
+			Description: "Update a Google Calendar event (partial update, only provided fields change). Attendees are not re-notified.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"event_id": {"type": "string", "description": "Calendar event ID"},
+					"summary": {"type": "string", "description": "New title"},
+					"start": {"type": "string", "description": "New start time RFC 3339 with offset"},
+					"end": {"type": "string", "description": "New end time RFC 3339 with offset"},
+					"description": {"type": "string", "description": "New description"},
+					"location": {"type": "string", "description": "New location"},
+					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Replace attendee list"},
+					"time_zone": {"type": "string", "description": "Time zone for changed times (default: Europe/Moscow)", "default": "Europe/Moscow"},
+					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				},
+				"required": ["event_id"]
+			}`),
+		},
+		{
+			Name:        "calendar_delete",
+			Description: "Delete a Google Calendar event by ID. Attendees are not notified.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"event_id": {"type": "string", "description": "Calendar event ID"},
+					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				},
+				"required": ["event_id"]
+			}`),
+		},
+		{
 			Name:        "mail_attachment_get",
 			Description: "Retrieve an attachment from a received email. Saves the file to a safe temporary path and returns JSON with path, size, and MIME type. Attachments must have been extracted on receive — call mail_read first to verify availability.",
 			InputSchema: json.RawMessage(`{
@@ -333,6 +412,16 @@ func handleToolCall(call ToolCall) ToolResult {
 		}
 		json.Unmarshal(call.Arguments, &p)
 		return handleGmailSearch(p.Query, p.Limit, p.Account)
+	case "calendar_list":
+		return handleCalendarList(call.Arguments)
+	case "calendar_get":
+		return handleCalendarGet(call.Arguments)
+	case "calendar_create":
+		return handleCalendarCreate(call.Arguments)
+	case "calendar_update":
+		return handleCalendarUpdate(call.Arguments)
+	case "calendar_delete":
+		return handleCalendarDelete(call.Arguments)
 	default:
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Unknown tool: " + call.Name}}}
 	}
@@ -347,9 +436,15 @@ func handleMailList(args json.RawMessage) ToolResult {
 		UnreadOnly bool   `json:"unread_only"`
 	}
 	json.Unmarshal(args, &params)
-	if params.Mailbox == "" { params.Mailbox = defaultMailbox }
-	if params.Page < 1 { params.Page = 1 }
-	if params.Limit < 1 { params.Limit = 10 }
+	if params.Mailbox == "" {
+		params.Mailbox = defaultMailbox
+	}
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.Limit < 1 {
+		params.Limit = 10
+	}
 
 	folderPath := MailDir + "/" + params.Mailbox
 	if params.Folder == "sent" {
@@ -379,7 +474,9 @@ func handleMailList(args json.RawMessage) ToolResult {
 		return ToolResult{Content: []ContentItem{{Type: "text", Text: "[]"}}}
 	}
 	end := start + params.Limit
-	if end > total { end = total }
+	if end > total {
+		end = total
+	}
 
 	var result []map[string]interface{}
 	for i := 0; i < len(files); i++ {
@@ -431,8 +528,12 @@ func handleMailRead(args json.RawMessage) ToolResult {
 		File    string `json:"file"`
 	}
 	json.Unmarshal(args, &params)
-	if params.Mailbox == "" { params.Mailbox = defaultMailbox }
-	if params.Folder == "" { params.Folder = "inbox" }
+	if params.Mailbox == "" {
+		params.Mailbox = defaultMailbox
+	}
+	if params.Folder == "" {
+		params.Folder = "inbox"
+	}
 
 	basePath := MailDir + "/" + params.Mailbox
 	if params.Folder == "sent" {
@@ -499,7 +600,9 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		var attB64 strings.Builder
 		for i := 0; i < len(attB64raw); i += 76 {
 			end := i + 76
-			if end > len(attB64raw) { end = len(attB64raw) }
+			if end > len(attB64raw) {
+				end = len(attB64raw)
+			}
 			attB64.WriteString(attB64raw[i:end] + "\r\n")
 		}
 		// Only the body after headers: boundary + text + boundary + attachment
