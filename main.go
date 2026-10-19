@@ -156,7 +156,9 @@ func getTools() []Tool {
 					"to":      {"type": "string", "description": "Recipient email"},
 					"subject": {"type": "string", "description": "Email subject"},
 					"body":    {"type": "string", "description": "Email body text"},
-					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"}
+					"attachment_path": {"type": "string", "description": "Path to file to attach (optional)"},
+					"from_name": {"type": "string", "description": "Sender display name (optional; default Барон)"},
+					"from_addr": {"type": "string", "description": "Sender address (optional; anytext@matrica.work for product letters)"}
 				},
 				"required": ["to", "subject", "body"]
 			}`),
@@ -580,6 +582,8 @@ func handleMailSend(args json.RawMessage) ToolResult {
 		Subject        string `json:"subject"`
 		Body           string `json:"body"`
 		AttachmentPath string `json:"attachment_path"`
+		FromName       string `json:"from_name"`
+		FromAddr       string `json:"from_addr"`
 	}
 	json.Unmarshal(args, &params)
 
@@ -611,9 +615,20 @@ func handleMailSend(args json.RawMessage) ToolResult {
 			boundary, attName, attB64.String(), boundary)
 	}
 
+	// Отправитель: по умолчанию Барон, но письма продукта должны приходить от AnyText.
+	// Адрес проверяем по списку разрешённых, чтобы инструмент нельзя было использовать как
+	// релей с чужим «от кого» (19.10.2026 — обращение #21).
+	fromName, fromAddr := params.FromName, params.FromAddr
+	if fromAddr != "" && !allowedSender(fromAddr) {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "from_addr не разрешён: " + fromAddr}}}
+	}
+	if fromName == "" && fromAddr != "" {
+		fromName = "AnyText"
+	}
+
 	// Send via Brevo SMTP (stdin to avoid ARG_MAX)
 	// Empty inReplyTo: mail_send creates a brand-new email, not a reply.
-	if err := sendSMTP(defaultFromName, defaultFromAddr, params.To, params.Subject, sendBody, ""); err != nil {
+	if err := sendSMTP(fromName, fromAddr, params.To, params.Subject, sendBody, ""); err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Send error: " + err.Error()}}}
 	}
 
@@ -751,4 +766,14 @@ func isValidMailbox(name string) bool {
 		}
 	}
 	return true
+}
+
+// allowedSender lists the addresses this tool may send as. Both are ours and both are
+// authenticated at Brevo: a product letter comes from AnyText, a personal one from Baron.
+func allowedSender(addr string) bool {
+	switch strings.ToLower(strings.TrimSpace(addr)) {
+	case "anytext@matrica.work", "baron@matrica.work":
+		return true
+	}
+	return false
 }
