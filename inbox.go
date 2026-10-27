@@ -18,7 +18,13 @@ import (
 	"time"
 )
 
-const inboxPort = ":8901"
+// Inbox listens on loopback: Cloudflare and nginx deliver to it from this machine.
+var inboxPort = func() string {
+	if v := os.Getenv("MAIL_MCP_INBOX_ADDR"); v != "" {
+		return v
+	}
+	return "127.0.0.1:8901"
+}()
 
 // startInboxServer starts the HTTP server that receives emails from Cloudflare.
 func startInboxServer() {

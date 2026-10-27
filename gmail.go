@@ -25,8 +25,16 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// Loopback by default: the callback reaches the internet through nginx, never by ip:port.
+// MAIL_MCP_CALLBACK_ADDR exists for the odd case of an OAuth client that insists on a public address.
+var gmailCallbackPort = func() string {
+	if v := os.Getenv("MAIL_MCP_CALLBACK_ADDR"); v != "" {
+		return v
+	}
+	return "127.0.0.1:9999"
+}()
+
 const (
-	gmailCallbackPort = ":9999"
 	gmailAPIBase      = "https://gmail.googleapis.com/gmail/v1/users/me"
 )
 
