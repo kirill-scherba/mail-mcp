@@ -18,16 +18,17 @@ import (
 	"time"
 )
 
-// Inbox listens on loopback: Cloudflare and nginx deliver to it from this machine.
-var inboxPort = func() string {
-	if v := os.Getenv("MAIL_MCP_INBOX_ADDR"); v != "" {
-		return v
-	}
-	return "127.0.0.1:8901"
-}()
+// inboxPort is empty by default: receiving mail is a server feature, not something a desktop
+// installation should do. It listens only when MAIL_MCP_INBOX_ADDR names an address (our own host sets
+// 127.0.0.1:8901 behind nginx), and loopback is the only sensible value for a machine that receives from
+// a local Cloudflare worker.
+var inboxPort = os.Getenv("MAIL_MCP_INBOX_ADDR")
 
 // startInboxServer starts the HTTP server that receives emails from Cloudflare.
 func startInboxServer() {
+	if inboxPort == "" {
+		return
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mail/inbox", handleInboxPost)
 

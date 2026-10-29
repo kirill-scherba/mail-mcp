@@ -60,8 +60,10 @@ func serveMCP() {
 	startGmailCallbackServer()
 	// Start inbox server (replaces mail-server.pl)
 	startInboxServer()
-	// Start periodic mail poller
-	startMailPoller()
+	// The periodic poller is a server habit: a desktop reads mail when asked. MAIL_MCP_POLL=on restores it.
+	if strings.EqualFold(os.Getenv("MAIL_MCP_POLL"), "on") {
+		startMailPoller()
+	}
 
 	// Read JSON-RPC from stdin
 	decoder := json.NewDecoder(os.Stdin)

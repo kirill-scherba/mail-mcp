@@ -33,7 +33,7 @@
     {
       "key": "GMAIL_REDIRECT_URI",
       "label": "адрес возврата после входа",
-      "hint": "обычно http://127.0.0.1:7787/oauth/gmail"
+      "hint": "для приложения на своём компьютере: http://127.0.0.1:9999/oauth/callback (тип клиента «Desktop app»)"
     },
     {
       "key": "BREVO_SMTP_KEY",
@@ -45,6 +45,16 @@
       "key": "CALENDAR_DEFAULT_TIMEZONE",
       "label": "часовой пояс календаря",
       "hint": "например Europe/Moscow"
+    },
+    {
+      "key": "MAIL_MCP_CALLBACK_ADDR",
+      "label": "адрес локального приёмника OAuth",
+      "hint": "127.0.0.1:9999 — нужен для входа в Google на своём компьютере"
+    },
+    {
+      "key": "MAIL_MCP_INBOX_ADDR",
+      "label": "адрес приёма почты на домен (только сервер)",
+      "hint": "пусто = приём выключен"
     }
   ],
   "docs": "https://github.com/kirill-scherba/mail-mcp#readme"

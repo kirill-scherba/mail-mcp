@@ -27,15 +27,12 @@ import (
 
 // Loopback by default: the callback reaches the internet through nginx, never by ip:port.
 // MAIL_MCP_CALLBACK_ADDR exists for the odd case of an OAuth client that insists on a public address.
-var gmailCallbackPort = func() string {
-	if v := os.Getenv("MAIL_MCP_CALLBACK_ADDR"); v != "" {
-		return v
-	}
-	return "127.0.0.1:9999"
-}()
+// gmailCallbackPort is empty by default: the OAuth callback listener exists for the host that runs the
+// authorisation flow. A desktop installation sets it to the address its own redirect URI names.
+var gmailCallbackPort = os.Getenv("MAIL_MCP_CALLBACK_ADDR")
 
 const (
-	gmailAPIBase      = "https://gmail.googleapis.com/gmail/v1/users/me"
+	gmailAPIBase = "https://gmail.googleapis.com/gmail/v1/users/me"
 )
 
 // googleTokenPath returns the token file path for an account.
@@ -117,6 +114,9 @@ func googleHTTPClient(account string) (*http.Client, error) {
 
 // startGmailCallbackServer starts a minimal HTTP server for OAuth callback.
 func startGmailCallbackServer() {
+	if gmailCallbackPort == "" {
+		return
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/callback", gmailCallbackHandler)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
