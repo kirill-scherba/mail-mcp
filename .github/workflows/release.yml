@@ -1,0 +1,55 @@
+# Release: a tag builds mail-mcp for both platforms and attaches the archives to a GitHub release.
+# Go only, so both platforms are cross-compiled on Linux with CGO_ENABLED=0.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            goos: linux
+            binary: mail-mcp
+          - platform: windows-amd64
+            goos: windows
+            binary: mail-mcp.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and pack
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          go build -trimpath -ldflags "-s -w" -o "${{ matrix.binary }}" .
+          zip="mail-mcp_${tag}_${{ matrix.platform }}.zip"
+          files=("${{ matrix.binary }}")
+          for extra in LICENSE README.md; do [ -f "$extra" ] && files+=("$extra"); done
+          zip -q "$zip" "${files[@]}"
+          sha256sum "$zip" > "$zip.sha256"
+          cat "$zip.sha256"
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256

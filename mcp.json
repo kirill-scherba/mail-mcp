@@ -1,0 +1,51 @@
+{
+  "name": "mail-mcp",
+  "title": {
+    "ru": "Почта",
+    "en": "Mail"
+  },
+  "description": {
+    "ru": "Почта и календарь: Gmail (чтение и отправка), SMTP через Brevo, входящие от Cloudflare, контакты, календарь Google.",
+    "en": "Mail and calendar: Gmail read/send, SMTP via Brevo, Cloudflare inbox, contacts, Google Calendar."
+  },
+  "category": "mail",
+  "install": "binary",
+  "command": [
+    "mail-mcp",
+    "serve"
+  ],
+  "entries": {
+    "linux-amd64": "mail-mcp",
+    "windows-amd64": "mail-mcp.exe"
+  },
+  "settings": [
+    {
+      "key": "GMAIL_CLIENT_ID",
+      "label": "OAuth client id Google",
+      "hint": "Google Cloud Console → Credentials"
+    },
+    {
+      "key": "GMAIL_CLIENT_SECRET",
+      "label": "OAuth client secret Google",
+      "hint": "Google Cloud Console → Credentials",
+      "secret": true
+    },
+    {
+      "key": "GMAIL_REDIRECT_URI",
+      "label": "адрес возврата после входа",
+      "hint": "обычно http://127.0.0.1:7787/oauth/gmail"
+    },
+    {
+      "key": "BREVO_SMTP_KEY",
+      "label": "ключ SMTP Brevo (для отправки)",
+      "hint": "Brevo → SMTP & API",
+      "secret": true
+    },
+    {
+      "key": "CALENDAR_DEFAULT_TIMEZONE",
+      "label": "часовой пояс календаря",
+      "hint": "например Europe/Moscow"
+    }
+  ],
+  "docs": "https://github.com/kirill-scherba/mail-mcp#readme"
+}
