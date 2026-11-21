@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,11 @@ import (
 const (
 	calendarAPIBase           = "https://www.googleapis.com/calendar/v3"
 	calendarDefaultCalendarID = "primary"
-	calendarMaxResults        = 250
+	// calendarPageSize is Google's own limit for one events.list page; calendarMaxResults is how many
+	// events one call may gather from several pages. A calendar screen asks for a month, and a month
+	// of a busy calendar does not fit into one page (21.11.2026).
+	calendarPageSize   = 250
+	calendarMaxResults = 2500
 )
 
 // calendarDefaultTimeZone returns the configured default time zone,
@@ -36,14 +41,15 @@ func calendarDefaultTimeZone() string {
 
 // calendarEvent is the subset of the Google Calendar Event resource we use.
 type calendarEvent struct {
-	ID          string   `json:"id,omitempty"`
-	Summary     string   `json:"summary,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Location    string   `json:"location,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	HTMLLink    string   `json:"htmlLink,omitempty"`
-	Recurrence  []string `json:"recurrence,omitempty"`
-	Start       struct {
+	ID               string   `json:"id,omitempty"`
+	Summary          string   `json:"summary,omitempty"`
+	Description      string   `json:"description,omitempty"`
+	Location         string   `json:"location,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	HTMLLink         string   `json:"htmlLink,omitempty"`
+	Recurrence       []string `json:"recurrence,omitempty"`
+	RecurringEventID string   `json:"recurringEventId,omitempty"`
+	Start            struct {
 		DateTime string `json:"dateTime,omitempty"`
 		Date     string `json:"date,omitempty"`
 		TimeZone string `json:"timeZone,omitempty"`
@@ -53,16 +59,73 @@ type calendarEvent struct {
 		Date     string `json:"date,omitempty"`
 		TimeZone string `json:"timeZone,omitempty"`
 	} `json:"end,omitempty"`
-	Attendees []struct {
-		Email          string `json:"email,omitempty"`
-		DisplayName    string `json:"displayName,omitempty"`
-		ResponseStatus string `json:"responseStatus,omitempty"`
-	} `json:"attendees,omitempty"`
+	Attendees []calendarAttendee `json:"attendees,omitempty"`
+}
+
+// calendarAttendee is one person on an event.
+type calendarAttendee struct {
+	Email          string `json:"email,omitempty"`
+	DisplayName    string `json:"displayName,omitempty"`
+	ResponseStatus string `json:"responseStatus,omitempty"`
+}
+
+// calendarEntry is one calendar of the person's calendar list.
+type calendarEntry struct {
+	ID              string `json:"id"`
+	Summary         string `json:"summary"`
+	Description     string `json:"description,omitempty"`
+	Primary         bool   `json:"primary,omitempty"`
+	AccessRole      string `json:"accessRole,omitempty"`
+	BackgroundColor string `json:"backgroundColor,omitempty"`
+	ForegroundColor string `json:"foregroundColor,omitempty"`
+	Selected        bool   `json:"selected,omitempty"`
+	TimeZone        string `json:"timeZone,omitempty"`
+}
+
+// calendarEntryJSON is a calendar as the structured answer shows it.
+type calendarEntryJSON struct {
+	ID              string `json:"id"`
+	Summary         string `json:"summary"`
+	Description     string `json:"description,omitempty"`
+	Primary         bool   `json:"primary"`
+	AccessRole      string `json:"access_role,omitempty"`
+	BackgroundColor string `json:"background_color,omitempty"`
+	ForegroundColor string `json:"foreground_color,omitempty"`
+	Selected        bool   `json:"selected"`
+	TimeZone        string `json:"time_zone,omitempty"`
+}
+
+// eventJSON is an event as the structured answer shows it: the shape a screen draws, not a sentence.
+// start and end are RFC 3339 timestamps for timed events and plain dates (2026-11-21) for all-day
+// ones, which is exactly what all_day tells the reader.
+type eventJSON struct {
+	ID               string              `json:"id"`
+	CalendarID       string              `json:"calendar_id,omitempty"`
+	Summary          string              `json:"summary"`
+	Description      string              `json:"description,omitempty"`
+	Location         string              `json:"location,omitempty"`
+	Status           string              `json:"status,omitempty"`
+	HTMLLink         string              `json:"html_link,omitempty"`
+	Start            string              `json:"start"`
+	End              string              `json:"end"`
+	AllDay           bool                `json:"all_day"`
+	TimeZone         string              `json:"time_zone,omitempty"`
+	RecurringEventID string              `json:"recurring_event_id,omitempty"`
+	Recurrence       []string            `json:"recurrence,omitempty"`
+	Attendees        []eventAttendeeJSON `json:"attendees,omitempty"`
+}
+
+// eventAttendeeJSON is one person on an event, as the structured answer shows it.
+type eventAttendeeJSON struct {
+	Email          string `json:"email"`
+	DisplayName    string `json:"display_name,omitempty"`
+	ResponseStatus string `json:"response_status,omitempty"`
 }
 
 // calendarEventsResponse is the envelope returned by events.list.
 type calendarEventsResponse struct {
-	Items []calendarEvent `json:"items"`
+	Items         []calendarEvent `json:"items"`
+	NextPageToken string          `json:"nextPageToken,omitempty"`
 }
 
 // calendarDo issues an authenticated Calendar API request and returns the
@@ -138,13 +201,22 @@ func calendarDo(account, method, rawURL string, body []byte) ([]byte, int, error
 }
 
 // calendarEventsURL builds the events.list URL with the mandatory parameters.
-func calendarEventsURL(calendarID, tz string, timeMin, timeMax time.Time, maxResults int) string {
+// calendarEventsURL builds one page request for events.list. Recurring events are expanded on the
+// server side (singleEvents): a calendar screen must show the Monday meeting on every Monday, and an
+// expanded instance is the one a person can move or delete. orderBy=startTime is legal only together
+// with singleEvents, and it is what a screen wants: a day read from top to bottom (21.11.2026).
+func calendarEventsURL(calendarID, tz string, timeMin, timeMax time.Time, maxResults int, pageToken string) string {
 	u, _ := url.Parse(calendarAPIBase + "/calendars/" + url.PathEscape(calendarID) + "/events")
 	q := u.Query()
 	q.Set("timeMin", timeMin.Format(time.RFC3339))
 	q.Set("timeMax", timeMax.Format(time.RFC3339))
 	q.Set("maxResults", fmt.Sprintf("%d", maxResults))
 	q.Set("timeZone", tz)
+	q.Set("singleEvents", "true")
+	q.Set("orderBy", "startTime")
+	if pageToken != "" {
+		q.Set("pageToken", pageToken)
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }
@@ -162,8 +234,8 @@ func parseRFC3339(value, field string) (time.Time, error) {
 	return t, nil
 }
 
-// calendarListEvents lists events in the requested range, leaving recurring
-// masters intact (singleEvents is not set). Results are sorted client-side.
+// calendarListEvents lists events in the requested range, expanding recurring events and reading as
+// many pages as maxResults asks for.
 func calendarListEvents(account, calendarID, tz string, timeMin, timeMax time.Time, maxResults int) ([]calendarEvent, error) {
 	if calendarID == "" {
 		calendarID = calendarDefaultCalendarID
@@ -175,22 +247,38 @@ func calendarListEvents(account, calendarID, tz string, timeMin, timeMax time.Ti
 		maxResults = calendarMaxResults
 	}
 
-	rawURL := calendarEventsURL(calendarID, tz, timeMin, timeMax, maxResults)
-	body, _, err := calendarDo(account, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
+	events := make([]calendarEvent, 0, maxResults)
+	pageToken := ""
+	for {
+		want := maxResults - len(events)
+		if want > calendarPageSize {
+			want = calendarPageSize
+		}
+		rawURL := calendarEventsURL(calendarID, tz, timeMin, timeMax, want, pageToken)
+		body, _, err := calendarDo(account, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var resp calendarEventsResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parse events: %w", err)
+		}
+		events = append(events, resp.Items...)
+		if resp.NextPageToken == "" || len(events) >= maxResults {
+			break
+		}
+		pageToken = resp.NextPageToken
+	}
+	if len(events) > maxResults {
+		events = events[:maxResults]
 	}
 
-	var resp calendarEventsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parse events: %w", err)
-	}
-
-	sort.Slice(resp.Items, func(i, j int) bool {
-		return eventLess(resp.Items[i], resp.Items[j], tz)
+	sort.Slice(events, func(i, j int) bool {
+		return eventLess(events[i], events[j], tz)
 	})
 
-	return resp.Items, nil
+	return events, nil
 }
 
 // eventStartTime extracts a comparable start time from an event.
@@ -243,6 +331,49 @@ func calendarGetEvent(account, calendarID, eventID string) (calendarEvent, error
 		return calendarEvent{}, fmt.Errorf("parse event: %w", err)
 	}
 	return e, nil
+}
+
+// parseEventTime reads an event boundary: an RFC 3339 timestamp with its offset, or a plain date for
+// an all-day event. The second value says which one it was (21.11.2026).
+func parseEventTime(value, field string) (time.Time, bool, error) {
+	if value == "" {
+		return time.Time{}, false, fmt.Errorf("%s is required", field)
+	}
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		return t, true, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("%s must be RFC 3339 with time zone offset (2026-11-21T10:00:00+03:00) or a date (2026-11-21)", field)
+	}
+	return t, false, nil
+}
+
+// eventSpanForCreate reads the start and end of a new event. A date pair makes an all-day event; when
+// both dates are the same day it becomes one whole day, because the end of an all-day event is the day
+// after the last one in the Calendar API, and "21.11 – 21.11" in a person's head is one day.
+func eventSpanForCreate(startValue, endValue string) (start, end time.Time, allDay bool, err error) {
+	start, startAllDay, err := parseEventTime(startValue, "start")
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	end, endAllDay, err := parseEventTime(endValue, "end")
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if startAllDay != endAllDay {
+		return time.Time{}, time.Time{}, false, errors.New("start and end must be both dates (all-day event) or both timestamps")
+	}
+	if startAllDay {
+		if !end.After(start) {
+			end = start.AddDate(0, 0, 1)
+		}
+		return start, end, true, nil
+	}
+	if !start.Before(end) {
+		return time.Time{}, time.Time{}, false, errors.New("start must be before end")
+	}
+	return start, end, false, nil
 }
 
 // attendeeEmails converts a slice of email strings into Calendar attendee objects.
@@ -308,6 +439,127 @@ func calendarDeleteEvent(account, calendarID, eventID string) error {
 		return fmt.Errorf("unexpected status %d on delete", status)
 	}
 	return nil
+}
+
+// eventJSONOf turns an event into the shape a screen draws.
+func eventJSONOf(e calendarEvent, calendarID string) eventJSON {
+	out := eventJSON{
+		ID:               e.ID,
+		CalendarID:       calendarID,
+		Summary:          e.Summary,
+		Description:      e.Description,
+		Location:         e.Location,
+		Status:           e.Status,
+		HTMLLink:         e.HTMLLink,
+		TimeZone:         e.Start.TimeZone,
+		RecurringEventID: e.RecurringEventID,
+		Recurrence:       e.Recurrence,
+	}
+	if e.Start.Date != "" {
+		out.AllDay = true
+		out.Start = e.Start.Date
+		out.End = e.End.Date
+	} else {
+		out.Start = e.Start.DateTime
+		out.End = e.End.DateTime
+	}
+	for _, a := range e.Attendees {
+		out.Attendees = append(out.Attendees, eventAttendeeJSON{
+			Email: a.Email, DisplayName: a.DisplayName, ResponseStatus: a.ResponseStatus,
+		})
+	}
+	return out
+}
+
+// eventsJSONOf is eventJSONOf for a list.
+func eventsJSONOf(events []calendarEvent, calendarID string) []eventJSON {
+	out := make([]eventJSON, 0, len(events))
+	for _, e := range events {
+		out = append(out, eventJSONOf(e, calendarID))
+	}
+	return out
+}
+
+// calendarListURL builds one page request for the person's calendar list.
+func calendarListURL(pageToken string) string {
+	u, _ := url.Parse(calendarAPIBase + "/users/me/calendarList")
+	q := u.Query()
+	q.Set("maxResults", fmt.Sprintf("%d", calendarPageSize))
+	if pageToken != "" {
+		q.Set("pageToken", pageToken)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// calendarListCalendars reads the calendars of the account: the primary one, the subscribed ones, the
+// birthdays calendar. Without this a screen can only show "primary", and a person with a work and a
+// home calendar would see half of his life (21.11.2026).
+func calendarListCalendars(account string) ([]calendarEntry, error) {
+	entries := make([]calendarEntry, 0, 8)
+	pageToken := ""
+	for {
+		body, _, err := calendarDo(account, http.MethodGet, calendarListURL(pageToken), nil)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Items         []calendarEntry `json:"items"`
+			NextPageToken string          `json:"nextPageToken,omitempty"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("parse calendars: %w", err)
+		}
+		entries = append(entries, resp.Items...)
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		// One's own calendar first, then the rest by name: the order a person expects.
+		if entries[i].Primary != entries[j].Primary {
+			return entries[i].Primary
+		}
+		return entries[i].Summary < entries[j].Summary
+	})
+	return entries, nil
+}
+
+// calendarEntriesJSON is the calendar list in the shape a screen draws.
+func calendarEntriesJSON(entries []calendarEntry) []calendarEntryJSON {
+	out := make([]calendarEntryJSON, 0, len(entries))
+	for _, c := range entries {
+		out = append(out, calendarEntryJSON{
+			ID:              c.ID,
+			Summary:         c.Summary,
+			Description:     c.Description,
+			Primary:         c.Primary,
+			AccessRole:      c.AccessRole,
+			BackgroundColor: c.BackgroundColor,
+			ForegroundColor: c.ForegroundColor,
+			Selected:        c.Selected,
+			TimeZone:        c.TimeZone,
+		})
+	}
+	return out
+}
+
+// formatCalendarList renders the calendars as compact text for the agent.
+func formatCalendarList(entries []calendarEntry) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📅 Календари: %d\n\n", len(entries)))
+	for i, c := range entries {
+		sb.WriteString(fmt.Sprintf("%d. %s — %s", i+1, c.Summary, c.ID))
+		if c.Primary {
+			sb.WriteString(" (основной)")
+		}
+		if c.AccessRole != "" {
+			sb.WriteString(" · " + c.AccessRole)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // mustEncode JSON-encodes v, panicking only on programmer error.
@@ -426,7 +678,16 @@ func handleCalendarList(args json.RawMessage) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: formatEventList(events, p.CalendarID)}}}
+	return ToolResult{
+		Content: []ContentItem{{Type: "text", Text: formatEventList(events, p.CalendarID)}},
+		StructuredContent: map[string]any{
+			"calendar_id": p.CalendarID,
+			"time_min":    timeMin.Format(time.RFC3339),
+			"time_max":    timeMax.Format(time.RFC3339),
+			"count":       len(events),
+			"events":      eventsJSONOf(events, p.CalendarID),
+		},
+	}
 }
 
 // handleCalendarGet implements the calendar_get MCP tool.
@@ -453,7 +714,10 @@ func handleCalendarGet(args json.RawMessage) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: formatEvent(e, 0)}}}
+	return ToolResult{
+		Content:           []ContentItem{{Type: "text", Text: formatEvent(e, 0)}},
+		StructuredContent: map[string]any{"calendar_id": p.CalendarID, "event": eventJSONOf(e, p.CalendarID)},
+	}
 }
 
 // handleCalendarCreate implements the calendar_create MCP tool.
@@ -475,16 +739,9 @@ func handleCalendarCreate(args json.RawMessage) ToolResult {
 	if p.Summary == "" {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "summary is required"}}}
 	}
-	startTime, err := parseRFC3339(p.Start, "start")
+	startTime, endTime, allDay, err := eventSpanForCreate(p.Start, p.End)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
-	}
-	endTime, err := parseRFC3339(p.End, "end")
-	if err != nil {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
-	}
-	if !startTime.Before(endTime) {
-		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "start must be before end"}}}
 	}
 	if p.CalendarID == "" {
 		p.CalendarID = calendarDefaultCalendarID
@@ -500,25 +757,27 @@ func handleCalendarCreate(args json.RawMessage) ToolResult {
 	e.Summary = p.Summary
 	e.Description = p.Description
 	e.Location = p.Location
-	e.Start.DateTime = startTime.Format(time.RFC3339)
-	e.Start.TimeZone = p.TimeZone
-	e.End.DateTime = endTime.Format(time.RFC3339)
-	e.End.TimeZone = p.TimeZone
-	if len(p.Attendees) > 0 {
-		for _, a := range attendeeEmails(p.Attendees) {
-			e.Attendees = append(e.Attendees, struct {
-				Email          string `json:"email,omitempty"`
-				DisplayName    string `json:"displayName,omitempty"`
-				ResponseStatus string `json:"responseStatus,omitempty"`
-			}{Email: a["email"]})
-		}
+	if allDay {
+		e.Start.Date = startTime.Format("2006-01-02")
+		e.End.Date = endTime.Format("2006-01-02")
+	} else {
+		e.Start.DateTime = startTime.Format(time.RFC3339)
+		e.Start.TimeZone = p.TimeZone
+		e.End.DateTime = endTime.Format(time.RFC3339)
+		e.End.TimeZone = p.TimeZone
+	}
+	for _, a := range attendeeEmails(p.Attendees) {
+		e.Attendees = append(e.Attendees, calendarAttendee{Email: a["email"]})
 	}
 
 	created, err := calendarCreateEvent(p.Account, p.CalendarID, e)
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Создано: %s\n%s", created.ID, formatEvent(created, 0))}}}
+	return ToolResult{
+		Content:           []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Создано: %s\n%s", created.ID, formatEvent(created, 0))}},
+		StructuredContent: map[string]any{"calendar_id": p.CalendarID, "event": eventJSONOf(created, p.CalendarID)},
+	}
 }
 
 // handleCalendarUpdate implements the calendar_update MCP tool (true PATCH).
@@ -561,19 +820,41 @@ func handleCalendarUpdate(args json.RawMessage) ToolResult {
 	if p.Location != "" {
 		patch["location"] = p.Location
 	}
+	var startTime time.Time
+	startAllDay := false
 	if p.Start != "" {
-		t, err := parseRFC3339(p.Start, "start")
+		t, allDay, err := parseEventTime(p.Start, "start")
 		if err != nil {
 			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
 		}
-		patch["start"] = map[string]string{"dateTime": t.Format(time.RFC3339), "timeZone": p.TimeZone}
+		startTime, startAllDay = t, allDay
+		if allDay {
+			// A PATCH merges with what is stored: a date without clearing the old dateTime is
+			// answered with "Invalid start time" (checked on the live calendar, 21.11.2026). The
+			// null tells Calendar to forget the field the event used to have.
+			patch["start"] = map[string]any{"date": t.Format("2006-01-02"), "dateTime": nil, "timeZone": nil}
+		} else {
+			patch["start"] = map[string]any{"dateTime": t.Format(time.RFC3339), "timeZone": p.TimeZone, "date": nil}
+		}
 	}
 	if p.End != "" {
-		t, err := parseRFC3339(p.End, "end")
+		t, allDay, err := parseEventTime(p.End, "end")
 		if err != nil {
 			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
 		}
-		patch["end"] = map[string]string{"dateTime": t.Format(time.RFC3339), "timeZone": p.TimeZone}
+		if allDay != startAllDay && p.Start != "" {
+			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "start and end must be both dates (all-day event) or both timestamps"}}}
+		}
+		// The end of an all-day event is the day after the last one: a person saying "the same day"
+		// means one whole day.
+		if allDay && p.Start != "" && !t.After(startTime) {
+			t = startTime.AddDate(0, 0, 1)
+		}
+		if allDay {
+			patch["end"] = map[string]any{"date": t.Format("2006-01-02"), "dateTime": nil, "timeZone": nil}
+		} else {
+			patch["end"] = map[string]any{"dateTime": t.Format(time.RFC3339), "timeZone": p.TimeZone, "date": nil}
+		}
 	}
 	if p.Attendees != nil {
 		patch["attendees"] = attendeeEmails(p.Attendees)
@@ -587,7 +868,10 @@ func handleCalendarUpdate(args json.RawMessage) ToolResult {
 	if err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Обновлено: %s\n%s", updated.ID, formatEvent(updated, 0))}}}
+	return ToolResult{
+		Content:           []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Обновлено: %s\n%s", updated.ID, formatEvent(updated, 0))}},
+		StructuredContent: map[string]any{"calendar_id": p.CalendarID, "event": eventJSONOf(updated, p.CalendarID)},
+	}
 }
 
 // handleCalendarDelete implements the calendar_delete MCP tool.
@@ -613,5 +897,33 @@ func handleCalendarDelete(args json.RawMessage) ToolResult {
 	if err := calendarDeleteEvent(p.Account, p.CalendarID, p.EventID); err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
 	}
-	return ToolResult{Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Удалено событие %s", p.EventID)}}}
+	return ToolResult{
+		Content:           []ContentItem{{Type: "text", Text: fmt.Sprintf("✅ Удалено событие %s", p.EventID)}},
+		StructuredContent: map[string]any{"calendar_id": p.CalendarID, "event_id": p.EventID, "deleted": true},
+	}
+}
+
+// handleCalendarCalendars implements the calendar_calendars MCP tool: which calendars the account has,
+// with the colours a screen needs to tell them apart.
+func handleCalendarCalendars(args json.RawMessage) ToolResult {
+	var p struct {
+		Account string `json:"account"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &p); err != nil {
+			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Invalid arguments: " + err.Error()}}}
+		}
+	}
+	if p.Account == "" {
+		p.Account = googleDefaultAccount("read")
+	}
+
+	entries, err := calendarListCalendars(p.Account)
+	if err != nil {
+		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}}
+	}
+	return ToolResult{
+		Content:           []ContentItem{{Type: "text", Text: formatCalendarList(entries)}},
+		StructuredContent: map[string]any{"calendars": calendarEntriesJSON(entries)},
+	}
 }

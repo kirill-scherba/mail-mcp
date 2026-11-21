@@ -29,6 +29,10 @@ type ToolCall struct {
 type ToolResult struct {
 	Content []ContentItem `json:"content"`
 	IsError bool          `json:"isError,omitempty"`
+	// StructuredContent is the same answer as typed JSON, for clients that draw a screen instead of
+	// reading a sentence (the calendar module of AnyText). The agent keeps using Content: a person
+	// asked for "what is on Tuesday", not for a JSON document (21.11.2026).
+	StructuredContent any `json:"structuredContent,omitempty"`
 }
 
 type ContentItem struct {
@@ -263,14 +267,24 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "calendar_list",
-			Description: "List Google Calendar events for a date range. Attendees are not notified.",
+			Description: "List Google Calendar events for a date range. Recurring events are expanded into their occurrences. Attendees are not notified.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"time_min": {"type": "string", "description": "Range start in RFC 3339 with offset (default: now)"},
-					"time_max": {"type": "string", "description": "Range end in RFC 3339 with offset (default: now + 7 days)"},
-					"max_results": {"type": "integer", "description": "Max events (default 10, max 250)", "default": 10},
+					"time_min": {"type": "string", "description": "Range start in RFC 3339 with offset or a date (default: now)"},
+					"time_max": {"type": "string", "description": "Range end in RFC 3339 with offset or a date (default: now + 7 days)"},
+					"max_results": {"type": "integer", "description": "Max events (default 10, max 2500; read in pages of 250)", "default": 10},
 					"calendar_id": {"type": "string", "description": "Calendar ID (default: primary)", "default": "primary"},
+					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
+				}
+			}`),
+		},
+		{
+			Name:        "calendar_calendars",
+			Description: "List the person's Google calendars (primary, subscribed, birthdays) with ids, access roles and colours.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
 					"account": {"type": "string", "description": "Google account (default: GMAIL_DEFAULT_READ_ACCOUNT)"}
 				}
 			}`),
@@ -295,8 +309,8 @@ func getTools() []Tool {
 				"type": "object",
 				"properties": {
 					"summary": {"type": "string", "description": "Event title"},
-					"start": {"type": "string", "description": "Start time RFC 3339 with offset"},
-					"end": {"type": "string", "description": "End time RFC 3339 with offset"},
+					"start": {"type": "string", "description": "Start: RFC 3339 with offset (2026-11-21T10:00:00+03:00) or a date (2026-11-21) for an all-day event"},
+					"end": {"type": "string", "description": "End: RFC 3339 with offset or a date for an all-day event; the same date as start means one whole day"},
 					"description": {"type": "string", "description": "Event description"},
 					"location": {"type": "string", "description": "Event location"},
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Email addresses of attendees"},
@@ -315,8 +329,8 @@ func getTools() []Tool {
 				"properties": {
 					"event_id": {"type": "string", "description": "Calendar event ID"},
 					"summary": {"type": "string", "description": "New title"},
-					"start": {"type": "string", "description": "New start time RFC 3339 with offset"},
-					"end": {"type": "string", "description": "New end time RFC 3339 with offset"},
+					"start": {"type": "string", "description": "New start: RFC 3339 with offset or a date for an all-day event"},
+					"end": {"type": "string", "description": "New end: RFC 3339 with offset or a date for an all-day event"},
 					"description": {"type": "string", "description": "New description"},
 					"location": {"type": "string", "description": "New location"},
 					"attendees": {"type": "array", "items": {"type": "string"}, "description": "Replace attendee list"},
@@ -418,6 +432,8 @@ func handleToolCall(call ToolCall) ToolResult {
 		return handleGmailSearch(p.Query, p.Limit, p.Account)
 	case "calendar_list":
 		return handleCalendarList(call.Arguments)
+	case "calendar_calendars":
+		return handleCalendarCalendars(call.Arguments)
 	case "calendar_get":
 		return handleCalendarGet(call.Arguments)
 	case "calendar_create":

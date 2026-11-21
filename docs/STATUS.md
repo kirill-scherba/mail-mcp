@@ -20,6 +20,7 @@
 - [x] Tool: mail_attachment_get (MCP tool for attachment retrieval) (#3)
 - [x] Write conversation summaries via contact.summary after every non-trivial email (#2)
 - [x] Google Calendar events CRUD + OAuth scope (#7)
+- [x] Calendar for screens: structuredContent, calendar_calendars, expanded recurrence, all-day events
 
 ## In progress
 

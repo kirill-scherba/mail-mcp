@@ -23,15 +23,22 @@ Outbound mail goes through Brevo SMTP API.
 | `mail_read` | Read a full email by filename, mark as read |
 | `mail_send` | Send an email via Brevo SMTP |
 | `mail_attachment_get` | Retrieve an attachment from a received email |
-| `calendar_list` | List Google Calendar events for a date range |
+| `calendar_list` | List Google Calendar events for a date range, recurring events expanded |
+| `calendar_calendars` | List the person's calendars (primary, subscribed, birthdays) |
 | `calendar_get` | Get a single Google Calendar event by ID |
-| `calendar_create` | Create a Google Calendar event |
+| `calendar_create` | Create a Google Calendar event (timed or all-day) |
 | `calendar_update` | Update a Google Calendar event (partial) |
 | `calendar_delete` | Delete a Google Calendar event by ID |
 
 ## Google Calendar
 
 Calendar tools reuse the same Google account and token storage as the Gmail tools. After the first deployment that includes Calendar support, run `gmail_auth` again so the stored token includes the `calendar` scope; otherwise Calendar calls return `403` and ask for re-authorization.
+
+Every calendar tool answers in two forms: the `content` text an agent reads, and `structuredContent`
+of the same answer for a client that draws a screen (the calendar module of AnyText). Events carry
+`start`, `end`, `all_day`, `recurring_event_id`, `calendar_id` and the colour of their calendar.
+`calendar_list` expands recurring events (`singleEvents=true`), so an occurrence is the thing that
+can be moved or deleted; `max_results` may reach 2500 and is read in pages of 250.
 
 ## Quick Start
 
