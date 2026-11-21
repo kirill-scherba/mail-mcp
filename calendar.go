@@ -782,17 +782,19 @@ func handleCalendarCreate(args json.RawMessage) ToolResult {
 
 // handleCalendarUpdate implements the calendar_update MCP tool (true PATCH).
 func handleCalendarUpdate(args json.RawMessage) ToolResult {
+	// Pointers, not values: "description": "" means "clear it", and a value that was not sent at all
+	// means "leave it". A screen that lets a person empty a field needs the difference (21.11.2026).
 	var p struct {
-		EventID     string   `json:"event_id"`
-		Summary     string   `json:"summary"`
-		Start       string   `json:"start"`
-		End         string   `json:"end"`
-		Description string   `json:"description"`
-		Location    string   `json:"location"`
-		Attendees   []string `json:"attendees"`
-		TimeZone    string   `json:"time_zone"`
-		CalendarID  string   `json:"calendar_id"`
-		Account     string   `json:"account"`
+		EventID     string    `json:"event_id"`
+		Summary     *string   `json:"summary"`
+		Start       *string   `json:"start"`
+		End         *string   `json:"end"`
+		Description *string   `json:"description"`
+		Location    *string   `json:"location"`
+		Attendees   *[]string `json:"attendees"`
+		TimeZone    string    `json:"time_zone"`
+		CalendarID  string    `json:"calendar_id"`
+		Account     string    `json:"account"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "Invalid arguments: " + err.Error()}}}
@@ -811,19 +813,19 @@ func handleCalendarUpdate(args json.RawMessage) ToolResult {
 	}
 
 	patch := map[string]any{}
-	if p.Summary != "" {
-		patch["summary"] = p.Summary
+	if p.Summary != nil {
+		patch["summary"] = *p.Summary
 	}
-	if p.Description != "" {
-		patch["description"] = p.Description
+	if p.Description != nil {
+		patch["description"] = *p.Description
 	}
-	if p.Location != "" {
-		patch["location"] = p.Location
+	if p.Location != nil {
+		patch["location"] = *p.Location
 	}
 	var startTime time.Time
 	startAllDay := false
-	if p.Start != "" {
-		t, allDay, err := parseEventTime(p.Start, "start")
+	if p.Start != nil && *p.Start != "" {
+		t, allDay, err := parseEventTime(*p.Start, "start")
 		if err != nil {
 			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
 		}
@@ -837,17 +839,17 @@ func handleCalendarUpdate(args json.RawMessage) ToolResult {
 			patch["start"] = map[string]any{"dateTime": t.Format(time.RFC3339), "timeZone": p.TimeZone, "date": nil}
 		}
 	}
-	if p.End != "" {
-		t, allDay, err := parseEventTime(p.End, "end")
+	if p.End != nil && *p.End != "" {
+		t, allDay, err := parseEventTime(*p.End, "end")
 		if err != nil {
 			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: err.Error()}}}
 		}
-		if allDay != startAllDay && p.Start != "" {
+		if allDay != startAllDay && p.Start != nil && *p.Start != "" {
 			return ToolResult{IsError: true, Content: []ContentItem{{Type: "text", Text: "start and end must be both dates (all-day event) or both timestamps"}}}
 		}
 		// The end of an all-day event is the day after the last one: a person saying "the same day"
 		// means one whole day.
-		if allDay && p.Start != "" && !t.After(startTime) {
+		if allDay && p.Start != nil && *p.Start != "" && !t.After(startTime) {
 			t = startTime.AddDate(0, 0, 1)
 		}
 		if allDay {
@@ -857,7 +859,8 @@ func handleCalendarUpdate(args json.RawMessage) ToolResult {
 		}
 	}
 	if p.Attendees != nil {
-		patch["attendees"] = attendeeEmails(p.Attendees)
+		// An empty list clears the attendees: "attendees": [] is a decision, not a silence.
+		patch["attendees"] = attendeeEmails(*p.Attendees)
 	}
 
 	if len(patch) == 0 {

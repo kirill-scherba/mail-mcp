@@ -33,3 +33,6 @@ ecosystem. It is fully functional: receive, list, read, and send email.
 - First run with Calendar requires `gmail_auth` re-authorization to obtain the calendar scope
 - The text answer stays the agent's answer; the structured answer is the screen's. One handler fills
   both from the same event value, so the two cannot drift
+- 2026-11-21 (later): calendar_update takes pointer fields, so `""` clears a field and `"attendees": []`
+  clears the list: a screen that lets a person empty a description must be able to empty it. Checked
+  live: description and location cleared on a real event.

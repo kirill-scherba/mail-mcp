@@ -323,7 +323,7 @@ func getTools() []Tool {
 		},
 		{
 			Name:        "calendar_update",
-			Description: "Update a Google Calendar event (partial update, only provided fields change). Attendees are not re-notified.",
+			Description: "Update a Google Calendar event (partial update: only provided fields change, an empty string clears a field, \"attendees\": [] clears the list). Attendees are not re-notified.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
