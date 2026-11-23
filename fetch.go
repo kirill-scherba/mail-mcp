@@ -202,6 +202,20 @@ func startMailFetch() {
 	}()
 }
 
+// runIntake is the receiver as a service: the port, the mailboxes and - when asked - the processing of the
+// letters that belong to this installation. No MCP, no Google callback: an internet entrance has no business
+// carrying either (23.11.2026).
+func runIntake() {
+	if strings.TrimSpace(os.Getenv("MAIL_MCP_INBOX_ADDR")) == "" {
+		log.Fatal("mail intake: MAIL_MCP_INBOX_ADDR is required")
+	}
+	startInboxServer()
+	if strings.EqualFold(os.Getenv("MAIL_MCP_POLL"), "on") {
+		startMailPoller()
+	}
+	select {}
+}
+
 // runMailFetch is the passive installation's own loop: it takes letters and does nothing else, so it can
 // be started by a scheduler, a container entrypoint or by hand - it does not need an MCP client.
 func runMailFetch() {

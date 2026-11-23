@@ -64,13 +64,19 @@ func main() {
 		serveMCP()
 		return
 	}
-	// A passive installation runs this instead of a mailbox service: no MCP, no port, only the loop that
-	// takes its letters from the installation that has a route (23.11.2026).
-	if os.Args[1] == "fetch" {
+	switch os.Args[1] {
+	case "intake":
+		// The receiver is a service of its own: it must not restart with an MCP client and must not share
+		// its failures - one process, one port, one job (23.11.2026).
+		runIntake()
+		return
+	case "fetch":
+		// A passive installation runs this instead of a mailbox service: no MCP, no port, only the loop
+		// that takes its letters from the installation that has a route.
 		runMailFetch()
 		return
 	}
-	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve | mail-mcp fetch")
+	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve | mail-mcp intake | mail-mcp fetch")
 }
 
 func serveMCP() {

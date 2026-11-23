@@ -86,7 +86,9 @@ func handleInboxPost(w http.ResponseWriter, r *http.Request) {
 
 	// Generate unique filename
 	now := time.Now().UTC()
-	fname := fmt.Sprintf("%s_%d.eml", now.Format("20060102_150405"), os.Getpid())
+	// The name must be unique: two letters of one batch arrive in the same second and from one process, and
+	// the second used to overwrite the first (23.11.2026).
+	fname := fmt.Sprintf("%s_%d_%09d.eml", now.Format("20060102_150405"), os.Getpid(), now.Nanosecond())
 
 	// Save raw email
 	if err := os.WriteFile(mboxDir+"/"+fname, body, 0644); err != nil {
@@ -135,6 +137,30 @@ func ensureAttachments(mboxDir, emlName string, raw []byte) []string {
 			names[i] = e.Name()
 		}
 		return names
+	}
+
+	// Files first: the Go walker needs nothing but the binary, while the Perl one needs Email::MIME.
+	if files := extractAttachmentsGo(raw); len(files) > 0 {
+		if err := os.MkdirAll(filepath.Dir(attDir), 0755); err != nil {
+			log.Printf("attachments dir %s: %v", emlName, err)
+			return nil
+		}
+		if err := os.MkdirAll(attDir, 0755); err != nil {
+			log.Printf("attachments dir %s: %v", emlName, err)
+			return nil
+		}
+		names := make([]string, 0, len(files))
+		for name, data := range files {
+			if err := os.WriteFile(filepath.Join(attDir, name), data, 0644); err != nil {
+				log.Printf("attachments write %s/%s: %v", emlName, name, err)
+				continue
+			}
+			names = append(names, name)
+		}
+		if len(names) > 0 {
+			log.Printf("attachments for %s: %v", emlName, names)
+			return names
+		}
 	}
 
 	// Decode quoted-printable (Cloudflare encodes multipart as QP)
