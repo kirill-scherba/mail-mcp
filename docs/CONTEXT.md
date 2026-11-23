@@ -21,6 +21,44 @@ ecosystem. It is fully functional: receive, list, read, and send email.
   timestamp to a date must null the old field, otherwise Calendar answers "Invalid start time"
   (checked live). The calendar module of AnyText is the client that asked for all of this.
 
+## 2026-11-23 — passive mail: one installation takes the letters of another
+
+An installation without a Cloudflare route cannot own a mailbox: the route lives on the domain, and the
+receiver lived inside `mail-mcp serve`. The receiver is now a service of its own and the letters travel
+between installations on request.
+
+- **`mail-mcp intake`** — the receiver alone: the port, the mailboxes and (with `MAIL_MCP_POLL=on`) the
+  processing of the letters that belong to this installation. No MCP, no Google callback. Deployed as
+  `mail-intake.service` with `~/.config/teonet/anytext/mail-intake.env`.
+- **`MAIL_BOXES="address:handler;…"`** — the mailbox and the agent assigned to it. An empty handler makes
+  the mailbox **transit**: the letters wait for the installation they belong to, no agent runs, and
+  `mail_process` refuses the mailbox even when asked by hand. `MAIL_AGENTS` still works.
+- **`POST /mail/fetch`**, **`POST /mail/ack`** — the passive half. `MAIL_FETCH_TOKENS` holds
+  `token:address,…` pairs, so a token names the mailboxes it may serve. A letter leaves the source only
+  after the confirmation and moves to `_delivered/`. nginx exposes both paths next to `/mail/inbox`.
+- **`mail-mcp fetch`** — the passive client: a loop without MCP and without a port, run by a scheduler or a
+  container entrypoint.
+- A mailbox folder is an address (`pro_tools@matrica.work`); old bare folders (`baron`) are still found —
+  the whole address is tried first, then its local part.
+
+Three faults found by sending real letters, all fixed:
+
+- the first letter with an attachment in a fresh mailbox lost the file: the rename into `attachments/`
+  assumed that folder existed — this affected Cloudflare deliveries too;
+- two letters of one batch arrive in the same second from one process and the second overwrote the first:
+  the file name now carries nanoseconds;
+- attachments were unpacked by a Perl one-liner needing `Email::MIME`, which a container does not have:
+  they are unpacked in Go (`attachments.go`), and Perl stays as the fallback for exotic encodings.
+
+Checked live on 23.11.2026: a letter posted to `https://a-mail.matrica.work/mail/inbox` (and later a real
+letter through Cloudflare, DKIM and SPF passing) landed in `/srv/mail/pro_tools@matrica.work/`, the
+installation `pro-tools` took it with `/mail/fetch` in 15–45 s, confirmed with `/mail/ack`, and its CSV
+price file was unpacked inside the container.
+
+Known gap: in the container the fetch loop is started by hand (`docker exec -d`), so it does not survive
+the recreation of the container. The permanent home is one line in the image entrypoint, or the `pro`
+module taking the letters itself — it is the one that needs the price files.
+
 ## Decisions
 
 - Go for MCP layer, Perl for email parsing, Perl for Brevo SMTP sending
