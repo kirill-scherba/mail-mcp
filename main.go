@@ -41,7 +41,16 @@ type ContentItem struct {
 }
 
 // MailDir is where emails are stored
-const MailDir = "/srv/mail"
+// MailDir is where mailboxes live. A variable, not a constant: an intake must be startable on a copy of a
+// folder to be testable at all (23.11.2026).
+var MailDir = envOr("MAIL_MCP_DIR", "/srv/mail")
+
+func envOr(name, def string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return def
+}
 
 // Default agent, mailbox, and sender identity
 const defaultAgent = "baron"
