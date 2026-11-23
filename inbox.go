@@ -106,12 +106,17 @@ func extractMailboxFromRaw(raw []byte) string {
 		return defaultMailbox
 	}
 	to := string(match[1])
-	re2 := regexp.MustCompile(`([\w.-]+)@matrica\.work`)
+	// The mailbox is the whole address, not its local part: two installations may hold pro@ on different
+	// domains, and a folder must name one mailbox exactly (23.11.2026).
+	re2 := regexp.MustCompile(`([\w.+-]+)@([\w.-]+\.[A-Za-z]{2,})`)
 	m2 := re2.FindStringSubmatch(to)
-	if len(m2) < 2 {
+	if len(m2) < 3 {
 		return defaultMailbox
 	}
-	return m2[1]
+	addr := strings.ToLower(m2[1] + "@" + m2[2])
+	// A folder name never carries a path: an address with a slash in it is not an address.
+	addr = strings.NewReplacer("/", "_", "\\", "_", " ", "").Replace(addr)
+	return addr
 }
 
 // ensureAttachments returns attachment file names for the given email.

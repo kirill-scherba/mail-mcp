@@ -85,7 +85,7 @@ func processMail(agent string) (string, error) {
 	os.WriteFile(lockFile, []byte(lockID), 0644)
 	defer os.Remove(lockFile)
 
-	mboxDir := MailDir + "/" + agent
+	mboxDir := mailboxDir(agent)
 	entries, err := os.ReadDir(mboxDir)
 	if err != nil {
 		return "", fmt.Errorf("cannot read mailbox %q: %w", agent, err)
@@ -280,6 +280,24 @@ func processMail(agent string) (string, error) {
 }
 
 // buildSenderContext reads last N emails from the same sender (inbox + sent)
+// mailboxDir answers the folder of a mailbox: the name as written, or the same name with the domain of
+// this server. Old folders ("baron") keep working; new letters go to "baron@matrica.work" (23.11.2026).
+func mailboxDir(name string) string {
+	dir := MailDir + "/" + name
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir
+	}
+	domain := strings.TrimSpace(os.Getenv("MAIL_DOMAIN"))
+	if domain == "" {
+		domain = "matrica.work"
+	}
+	addr := MailDir + "/" + strings.ToLower(name) + "@" + strings.ToLower(domain)
+	if st, err := os.Stat(addr); err == nil && st.IsDir() {
+		return addr
+	}
+	return dir
+}
+
 func buildSenderContext(mboxDir, senderEmail, skipFile string) string {
 	type emailInfo struct {
 		name string
