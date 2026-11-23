@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -31,6 +32,9 @@ func startInboxServer() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mail/inbox", handleInboxPost)
+	// Passive installations take their letters here, with a token that names their mailboxes.
+	mux.HandleFunc("/mail/fetch", mailFetchHandler)
+	mux.HandleFunc("/mail/ack", mailAckHandler)
 
 	server := &http.Server{
 		Addr:         inboxPort,
@@ -164,6 +168,13 @@ func ensureAttachments(mboxDir, emlName string, raw []byte) []string {
 	}
 
 	os.RemoveAll(attDir)
+	// The rename needs the parent: the first letter with an attachment in a fresh mailbox used to lose it,
+	// because "attachments" was assumed to exist (23.11.2026).
+	if err := os.MkdirAll(filepath.Dir(attDir), 0755); err != nil {
+		log.Printf("attachments dir %s: %v", emlName, err)
+		os.RemoveAll(tmpOut)
+		return nil
+	}
 	if err := os.Rename(tmpOut, attDir); err != nil {
 		log.Printf("attachments move %s: %v", emlName, err)
 		os.RemoveAll(tmpOut)

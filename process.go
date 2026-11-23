@@ -74,21 +74,31 @@ func handleMailProcess(args *struct {
 
 const opencodeBaseURL = "http://127.0.0.1:7712"
 
-// processMail scans unprocessed .eml files and processes each.
+// processMail scans the mailbox named after the agent: the old habit, kept for mail_process.
 func processMail(agent string) (string, error) {
+	return processMailbox(agent, agent)
+}
+
+// processMailbox processes the letters of one mailbox with the agent assigned to it. The mailbox and the
+// agent are separate names: a mailbox may be an address (pro_tools@matrica.work) while the agent that
+// answers its letters is called pro_tools (23.11.2026).
+func processMailbox(mailbox, agent string) (string, error) {
+	if isTransitMailbox(mailbox) {
+		return "", fmt.Errorf("mailbox %q is transit: no agent is assigned to it", mailbox)
+	}
 	lockID, _ := cryptoRandStr(16)
-	lockFile := MailDir + "/." + agent + ".lock"
+	lockFile := MailDir + "/." + mailbox + ".lock"
 
 	if _, err := os.Stat(lockFile); err == nil {
-		return "", fmt.Errorf("lock exists for agent %s, another process is running", agent)
+		return "", fmt.Errorf("lock exists for mailbox %s, another process is running", mailbox)
 	}
 	os.WriteFile(lockFile, []byte(lockID), 0644)
 	defer os.Remove(lockFile)
 
-	mboxDir := mailboxDir(agent)
+	mboxDir := mailboxDir(mailbox)
 	entries, err := os.ReadDir(mboxDir)
 	if err != nil {
-		return "", fmt.Errorf("cannot read mailbox %q: %w", agent, err)
+		return "", fmt.Errorf("cannot read mailbox %q: %w", mailbox, err)
 	}
 
 	var results []string
@@ -280,22 +290,35 @@ func processMail(agent string) (string, error) {
 }
 
 // buildSenderContext reads last N emails from the same sender (inbox + sent)
-// mailboxDir answers the folder of a mailbox: the name as written, or the same name with the domain of
-// this server. Old folders ("baron") keep working; new letters go to "baron@matrica.work" (23.11.2026).
+// mailboxDir answers the folder of a mailbox. A mailbox and a folder are not the same thing: a mailbox is
+// named by an address (baron@matrica.work) while the folder may be the old bare name (baron), so both are
+// tried - the whole address first, then its local part, then the address built from the domain of this
+// server (23.11.2026).
 func mailboxDir(name string) string {
-	dir := MailDir + "/" + name
-	if st, err := os.Stat(dir); err == nil && st.IsDir() {
-		return dir
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return MailDir
 	}
-	domain := strings.TrimSpace(os.Getenv("MAIL_DOMAIN"))
+	domain := strings.ToLower(strings.TrimSpace(os.Getenv("MAIL_DOMAIN")))
 	if domain == "" {
 		domain = "matrica.work"
 	}
-	addr := MailDir + "/" + strings.ToLower(name) + "@" + strings.ToLower(domain)
-	if st, err := os.Stat(addr); err == nil && st.IsDir() {
-		return addr
+	local, address := name, name
+	if i := strings.Index(name, "@"); i > 0 {
+		local = name[:i]
+	} else {
+		address = name + "@" + domain
 	}
-	return dir
+	for _, candidate := range []string{address, local} {
+		dir := MailDir + "/" + candidate
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir
+		}
+	}
+	if strings.Contains(name, "@") {
+		return MailDir + "/" + address
+	}
+	return MailDir + "/" + local
 }
 
 func buildSenderContext(mboxDir, senderEmail, skipFile string) string {

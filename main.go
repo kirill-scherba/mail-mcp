@@ -64,7 +64,13 @@ func main() {
 		serveMCP()
 		return
 	}
-	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve")
+	// A passive installation runs this instead of a mailbox service: no MCP, no port, only the loop that
+	// takes its letters from the installation that has a route (23.11.2026).
+	if os.Args[1] == "fetch" {
+		runMailFetch()
+		return
+	}
+	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve | mail-mcp fetch")
 }
 
 func serveMCP() {
@@ -73,6 +79,8 @@ func serveMCP() {
 	startGmailCallbackServer()
 	// Start inbox server (replaces mail-server.pl)
 	startInboxServer()
+	// Passive mode: no route of its own, takes letters from the installation that has one.
+	startMailFetch()
 	// The periodic poller is a server habit: a desktop reads mail when asked. MAIL_MCP_POLL=on restores it.
 	if strings.EqualFold(os.Getenv("MAIL_MCP_POLL"), "on") {
 		startMailPoller()
