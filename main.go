@@ -70,13 +70,18 @@ func main() {
 		// its failures - one process, one port, one job (23.11.2026).
 		runIntake()
 		return
+	case "attachments":
+		// Re-unpack the files of a mailbox: the extractor is a moving part, and letters already on disk keep
+		// the names they were given (by an older version, or by a bug that has since been fixed).
+		runReattach(os.Args[2:])
+		return
 	case "fetch":
 		// A passive installation runs this instead of a mailbox service: no MCP, no port, only the loop
 		// that takes its letters from the installation that has a route.
 		runMailFetch()
 		return
 	}
-	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve | mail-mcp intake | mail-mcp fetch")
+	fmt.Println("mail-mcp MCP server. Usage: mail-mcp serve | mail-mcp intake | mail-mcp fetch | mail-mcp attachments <mailbox>")
 }
 
 func serveMCP() {

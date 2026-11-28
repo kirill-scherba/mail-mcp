@@ -5,12 +5,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"mime/quotedprintable"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,9 +76,17 @@ func handleInboxPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decode quoted-printable (Cloudflare encodes multipart as QP)
-	if decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(string(body)))); err == nil && len(decoded) > 0 {
-		body = decoded
+	// A letter that parses as a letter is stored exactly as it arrived. Decoding the whole message as
+	// quoted-printable was wrong: the encoding belongs to the parts, and the pass ate the "=" that ends an
+	// encoded word at a line break and turned "t=1795528205" into control characters, so a real supplier
+	// price list arrived with a broken Subject and an unreadable file name (found 28.11.2026). Only a body
+	// that does not parse at all gets the chance to be a quoted-printable message.
+	if _, perr := mail.ReadMessage(bytes.NewReader(body)); perr != nil {
+		if decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body))); err == nil && len(decoded) > 0 {
+			if _, ok := mail.ReadMessage(bytes.NewReader(decoded)); ok == nil {
+				body = decoded
+			}
+		}
 	}
 
 	// Determine mailbox from To: header (local-part@matrica.work)
