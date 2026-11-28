@@ -59,6 +59,28 @@ Known gap: in the container the fetch loop is started by hand (`docker exec -d`)
 the recreation of the container. The permanent home is one line in the image entrypoint, or the `pro`
 module taking the letters itself — it is the one that needs the price files.
 
+## 2026-11-28 — real price letters, and what they broke
+
+Eighteen letters from `pro-tools.ru` (Sergey forwarding supplier lists) came through Cloudflare between
+24 and 26 November: 46 files, from АВТОРУСЬ, Оптимист, Kimotozip, ЗИТРЕК РУС, ВЕРТЕКС, ТМК, MAXPILER,
+STALEX, Интерскол, Аккорд, Уралоптинструмент, ИП Постников, Эврика, LIGE, JTC+GTE. They exposed three
+faults that no synthetic test had found.
+
+- **The receiver damaged letters.** It decoded the whole message as quoted-printable; the encoding belongs
+  to the parts. The pass ate the `=` that ends an encoded word at a line break, merged `Subject` with
+  `MIME-Version`, and turned `t=1795528205` into control characters. Now a message that parses is stored
+  exactly as it arrived, and only an unparseable body gets the quoted-printable chance.
+- **File names were unreadable.** Suppliers write a long name as an encoded word folded over two lines.
+  `mime.ParseMediaType` stops at the fold and answers the tail; `mime.WordDecoder.DecodeHeader` leaves two
+  words inside quotes undecoded. The header is unfolded, repaired where the receiver ate a character, and
+  decoded word by word; the whitespace between two words is dropped.
+- **A part was thrown away whole.** One incomplete base64 quantum at the end made the stream decoder fail
+  and the partial data was dropped, so the letter counted as having no files. The text is collected,
+  whitespace dropped, padding restored, and the bytes before the break are kept.
+
+`mail-mcp attachments <mailbox>` unpacks a mailbox again — needed because letters already on disk keep the
+names an older extractor gave them. Checked: 46 files, readable names, extensions kept, xlsx and zip open.
+
 ## Decisions
 
 - Go for MCP layer, Perl for email parsing, Perl for Brevo SMTP sending
